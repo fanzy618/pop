@@ -49,3 +49,20 @@ func TestRequestHost(t *testing.T) {
 		t.Fatalf("requestHost(connect req) = %q, want %q", got, want)
 	}
 }
+
+func TestMatchHost(t *testing.T) {
+	t.Parallel()
+
+	connectReq := &http.Request{Method: http.MethodConnect, Host: "Foo.Bar:443"}
+	if got, want := matchHost(connectReq), "foo.bar"; got != want {
+		t.Fatalf("matchHost(connect req) = %q, want %q", got, want)
+	}
+
+	httpReq, err := http.NewRequest(http.MethodGet, "http://Example.com:8080/a", nil)
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	if got, want := matchHost(httpReq), "example.com"; got != want {
+		t.Fatalf("matchHost(http req) = %q, want %q", got, want)
+	}
+}

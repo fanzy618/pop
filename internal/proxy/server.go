@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -10,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/fanzy618/pop/internal/rules"
 )
 
 var hopByHopHeaders = []string{
@@ -27,9 +28,20 @@ var hopByHopHeaders = []string{
 type Server struct {
 	transport *http.Transport
 	dialer    *net.Dialer
+
+	mu      sync.RWMutex
+	matcher *rules.Matcher
 }
 
 func NewServer() *Server {
+	return NewServerWithMatcher(nil)
+}
+
+func NewServerWithMatcher(matcher *rules.Matcher) *Server {
+	if matcher == nil {
+		matcher = rules.NewMatcher(nil, rules.Decision{Action: rules.ActionDirect})
+	}
+
 	return &Server{
 		transport: &http.Transport{
 			Proxy:                 nil,
@@ -41,11 +53,51 @@ func NewServer() *Server {
 			ExpectContinueTimeout: 1 * time.Second,
 			ResponseHeaderTimeout: 20 * time.Second,
 		},
-		dialer: &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second},
+		dialer:  &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second},
+		matcher: matcher,
 	}
 }
 
+func (s *Server) SetMatcher(matcher *rules.Matcher) {
+	if matcher == nil {
+		matcher = rules.NewMatcher(nil, rules.Decision{Action: rules.ActionDirect})
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.matcher = matcher
+}
+
+func (s *Server) decide(host string) rules.Decision {
+	s.mu.RLock()
+	matcher := s.matcher
+	s.mu.RUnlock()
+
+	if matcher == nil {
+		return rules.Decision{Action: rules.ActionDirect}
+	}
+
+	return matcher.Decide(host)
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	host := matchHost(r)
+	decision := s.decide(host)
+
+	if decision.Action == rules.ActionBlock {
+		code := decision.BlockStatus
+		if code == 0 {
+			code = http.StatusNotFound
+		}
+		http.Error(w, http.StatusText(code), code)
+		return
+	}
+
+	if decision.Action == rules.ActionProxy {
+		http.Error(w, "upstream proxy routing is not available yet", http.StatusBadGateway)
+		return
+	}
+
 	if r.Method == http.MethodConnect {
 		s.handleConnect(w, r)
 		return
@@ -229,6 +281,28 @@ func requestHost(r *http.Request) string {
 	return ""
 }
 
-func bufferedReader(conn net.Conn) *bufio.Reader {
-	return bufio.NewReader(conn)
+func matchHost(r *http.Request) string {
+	host := requestHost(r)
+	if host == "" {
+		return ""
+	}
+
+	if strings.HasPrefix(host, "[") {
+		parsedHost, _, err := net.SplitHostPort(host)
+		if err == nil {
+			return strings.TrimSuffix(strings.ToLower(parsedHost), ".")
+		}
+		return strings.TrimSuffix(strings.ToLower(host), ".")
+	}
+
+	parsedHost, _, err := net.SplitHostPort(host)
+	if err == nil {
+		return strings.TrimSuffix(strings.ToLower(parsedHost), ".")
+	}
+
+	if strings.Count(host, ":") == 0 {
+		return strings.TrimSuffix(strings.ToLower(host), ".")
+	}
+
+	return strings.TrimSuffix(strings.ToLower(host), ".")
 }
