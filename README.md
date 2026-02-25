@@ -31,7 +31,7 @@ If no rule matches, POP uses `default_action` (currently recommended and default
 
 ## Quick Start
 
-1. Create a config file (example below) as `./pop.json`.
+1. Create a config file as `./pop.json` (you can copy from `./pop.example.json`).
 2. Run POP:
 
 ```bash

@@ -1,0 +1,54 @@
+{
+  "proxy_listen": "127.0.0.1:8080",
+  "console_listen": "127.0.0.1:9090",
+  "auth": {
+    "username": "admin",
+    "password": "admin"
+  },
+  "default_action": "DIRECT",
+  "upstreams": [
+    {
+      "id": "A",
+      "url": "http://127.0.0.1:18080",
+      "enabled": true
+    },
+    {
+      "id": "B",
+      "url": "http://127.0.0.1:18081",
+      "enabled": true
+    }
+  ],
+  "rules": [
+    {
+      "id": "internal-direct",
+      "enabled": true,
+      "order": 1,
+      "pattern": "*.corp.local",
+      "action": "DIRECT"
+    },
+    {
+      "id": "ads-block",
+      "enabled": true,
+      "order": 2,
+      "pattern": "*ads*",
+      "action": "BLOCK",
+      "block_status": 404
+    },
+    {
+      "id": "external-a",
+      "enabled": true,
+      "order": 3,
+      "pattern": "*.google.com",
+      "action": "PROXY",
+      "upstream_id": "A"
+    },
+    {
+      "id": "external-b",
+      "enabled": true,
+      "order": 4,
+      "pattern": "*.openai.com",
+      "action": "PROXY",
+      "upstream_id": "B"
+    }
+  ]
+}
