@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/fanzy618/pop/internal/rules"
+	"github.com/fanzy618/pop/internal/telemetry"
 	"github.com/fanzy618/pop/internal/upstream"
 )
 
@@ -38,6 +39,7 @@ type Server struct {
 	matcher *rules.Matcher
 
 	upstreams *upstream.Manager
+	telemetry *telemetry.Store
 }
 
 func NewServer() *Server {
@@ -71,6 +73,7 @@ func NewServerWithDeps(matcher *rules.Matcher, upstreams *upstream.Manager) *Ser
 		dialer:    &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second},
 		matcher:   matcher,
 		upstreams: upstreams,
+		telemetry: telemetry.NewStore(10000, 30*time.Minute),
 	}
 }
 
@@ -117,9 +120,40 @@ func (s *Server) getUpstream(id string) (*upstream.Target, bool) {
 	return m.Get(id)
 }
 
+func (s *Server) SetTelemetry(store *telemetry.Store) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.telemetry = store
+}
+
+func (s *Server) getTelemetry() *telemetry.Store {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.telemetry
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host := matchHost(r)
 	decision := s.decide(host)
+	tel := s.getTelemetry()
+
+	result := telemetry.Result{
+		Client:       r.RemoteAddr,
+		Method:       r.Method,
+		Host:         host,
+		Action:       string(decision.Action),
+		RuleID:       decision.RuleID,
+		RequestBytes: maxInt64(r.ContentLength, 0),
+	}
+
+	startAt := time.Now()
+	if tel != nil {
+		tel.Start(result.RequestBytes)
+		defer func() {
+			result.Duration = time.Since(startAt)
+			tel.Finish(result)
+		}()
+	}
 
 	if decision.Action == rules.ActionBlock {
 		code := decision.BlockStatus
@@ -127,36 +161,51 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			code = http.StatusNotFound
 		}
 		http.Error(w, http.StatusText(code), code)
+		result.Status = code
 		return
 	}
 
 	if decision.Action == rules.ActionProxy {
 		if decision.UpstreamID == "" {
 			http.Error(w, "upstream proxy id is required", http.StatusBadGateway)
+			result.Status = http.StatusBadGateway
+			result.Err = errors.New("upstream proxy id is required")
 			return
 		}
 
 		target, ok := s.getUpstream(decision.UpstreamID)
 		if !ok {
 			http.Error(w, "upstream proxy is not available", http.StatusBadGateway)
+			result.Status = http.StatusBadGateway
+			result.Err = errors.New("upstream proxy is not available")
 			return
 		}
 
 		if r.Method == http.MethodConnect {
-			s.handleConnectViaUpstream(w, r, target)
+			status, err := s.handleConnectViaUpstream(w, r, target)
+			result.Status = status
+			result.Err = err
 			return
 		}
 
-		s.handleHTTP(w, r, target.Transport)
+		rw := newResponseRecorder(w)
+		s.handleHTTP(rw, r, target.Transport)
+		result.Status = rw.status
+		result.ResponseBytes = rw.bytes
 		return
 	}
 
 	if r.Method == http.MethodConnect {
-		s.handleConnect(w, r)
+		status, err := s.handleConnect(w, r)
+		result.Status = status
+		result.Err = err
 		return
 	}
 
-	s.handleHTTP(w, r, s.directTransport)
+	rw := newResponseRecorder(w)
+	s.handleHTTP(rw, r, s.directTransport)
+	result.Status = rw.status
+	result.ResponseBytes = rw.bytes
 }
 
 func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request, transport *http.Transport) {
@@ -188,16 +237,16 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request, transport *h
 	_, _ = io.Copy(w, resp.Body)
 }
 
-func (s *Server) handleConnectViaUpstream(w http.ResponseWriter, r *http.Request, target *upstream.Target) {
+func (s *Server) handleConnectViaUpstream(w http.ResponseWriter, r *http.Request, target *upstream.Target) (int, error) {
 	if target == nil || target.URL == nil {
 		http.Error(w, "upstream proxy is invalid", http.StatusBadGateway)
-		return
+		return http.StatusBadGateway, errors.New("upstream proxy is invalid")
 	}
 
 	connectTarget := normalizeHost(r.Host)
 	if connectTarget == "" {
 		http.Error(w, "bad connect target", http.StatusBadRequest)
-		return
+		return http.StatusBadRequest, errors.New("bad connect target")
 	}
 
 	upstreamAddr := target.URL.Host
@@ -208,13 +257,13 @@ func (s *Server) handleConnectViaUpstream(w http.ResponseWriter, r *http.Request
 	upstreamConn, err := s.dialer.DialContext(r.Context(), "tcp", upstreamAddr)
 	if err != nil {
 		http.Error(w, "bad gateway", http.StatusBadGateway)
-		return
+		return http.StatusBadGateway, err
 	}
 
 	if err := writeUpstreamConnectRequest(upstreamConn, connectTarget, target.URL); err != nil {
 		upstreamConn.Close()
 		http.Error(w, "bad gateway", http.StatusBadGateway)
-		return
+		return http.StatusBadGateway, err
 	}
 
 	br := bufio.NewReader(upstreamConn)
@@ -222,38 +271,39 @@ func (s *Server) handleConnectViaUpstream(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		upstreamConn.Close()
 		http.Error(w, "bad gateway", http.StatusBadGateway)
-		return
+		return http.StatusBadGateway, err
 	}
 	defer upResp.Body.Close()
 
 	if upResp.StatusCode != http.StatusOK {
 		upstreamConn.Close()
 		http.Error(w, fmt.Sprintf("upstream connect failed: %d", upResp.StatusCode), http.StatusBadGateway)
-		return
+		return http.StatusBadGateway, errors.New("upstream connect failed")
 	}
 
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		upstreamConn.Close()
 		http.Error(w, "hijacking not supported", http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, errors.New("hijacking not supported")
 	}
 
 	clientConn, rw, err := hj.Hijack()
 	if err != nil {
 		upstreamConn.Close()
 		http.Error(w, "hijack failed", http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, err
 	}
 
 	_, _ = rw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
 	if err := rw.Flush(); err != nil {
 		clientConn.Close()
 		upstreamConn.Close()
-		return
+		return http.StatusInternalServerError, err
 	}
 
 	tunnel(clientConn, upstreamConn)
+	return http.StatusOK, nil
 }
 
 func writeUpstreamConnectRequest(conn net.Conn, target string, upstreamURL *url.URL) error {
@@ -279,41 +329,42 @@ func writeUpstreamConnectRequest(conn net.Conn, target string, upstreamURL *url.
 	return err
 }
 
-func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) (int, error) {
 	target := normalizeHost(r.Host)
 	if target == "" {
 		http.Error(w, "bad connect target", http.StatusBadRequest)
-		return
+		return http.StatusBadRequest, errors.New("bad connect target")
 	}
 
 	upConn, err := s.dialer.DialContext(r.Context(), "tcp", target)
 	if err != nil {
 		http.Error(w, "bad gateway", http.StatusBadGateway)
-		return
+		return http.StatusBadGateway, err
 	}
 
 	hj, ok := w.(http.Hijacker)
 	if !ok {
 		upConn.Close()
 		http.Error(w, "hijacking not supported", http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, errors.New("hijacking not supported")
 	}
 
 	clientConn, rw, err := hj.Hijack()
 	if err != nil {
 		upConn.Close()
 		http.Error(w, "hijack failed", http.StatusInternalServerError)
-		return
+		return http.StatusInternalServerError, err
 	}
 
 	_, _ = rw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
 	if err := rw.Flush(); err != nil {
 		clientConn.Close()
 		upConn.Close()
-		return
+		return http.StatusInternalServerError, err
 	}
 
 	tunnel(clientConn, upConn)
+	return http.StatusOK, nil
 }
 
 func tunnel(a, b net.Conn) {
@@ -454,4 +505,39 @@ func matchHost(r *http.Request) string {
 	}
 
 	return strings.TrimSuffix(strings.ToLower(host), ".")
+}
+
+type responseRecorder struct {
+	http.ResponseWriter
+	status      int
+	bytes       int64
+	wroteHeader bool
+}
+
+func newResponseRecorder(w http.ResponseWriter) *responseRecorder {
+	return &responseRecorder{ResponseWriter: w, status: http.StatusOK}
+}
+
+func (r *responseRecorder) WriteHeader(statusCode int) {
+	if !r.wroteHeader {
+		r.status = statusCode
+		r.wroteHeader = true
+	}
+	r.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (r *responseRecorder) Write(p []byte) (int, error) {
+	if !r.wroteHeader {
+		r.WriteHeader(http.StatusOK)
+	}
+	n, err := r.ResponseWriter.Write(p)
+	r.bytes += int64(n)
+	return n, err
+}
+
+func maxInt64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
 }
