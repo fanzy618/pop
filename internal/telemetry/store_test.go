@@ -61,3 +61,23 @@ func TestStoreStats(t *testing.T) {
 		t.Fatalf("in-flight = %d, want 0", stats.InFlight)
 	}
 }
+
+func TestStoreSubscribe(t *testing.T) {
+	t.Parallel()
+
+	store := NewStore(10, time.Minute)
+	ch, unsubscribe := store.Subscribe(1)
+	t.Cleanup(unsubscribe)
+
+	store.Start(0)
+	store.Finish(Result{Status: 200, Duration: time.Millisecond})
+
+	select {
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("expected event from subscription")
+	case ev := <-ch:
+		if ev.Status != 200 {
+			t.Fatalf("event status=%d, want 200", ev.Status)
+		}
+	}
+}

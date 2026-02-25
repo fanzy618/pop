@@ -16,9 +16,15 @@ import (
 type Config struct {
 	ProxyListen   string           `json:"proxy_listen"`
 	ConsoleListen string           `json:"console_listen"`
+	Auth          AuthConfig       `json:"auth"`
 	DefaultAction rules.Action     `json:"default_action"`
 	Upstreams     []UpstreamConfig `json:"upstreams"`
 	Rules         []RuleConfig     `json:"rules"`
+}
+
+type AuthConfig struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 type UpstreamConfig struct {
@@ -41,6 +47,10 @@ func Default() *Config {
 	return &Config{
 		ProxyListen:   "127.0.0.1:8080",
 		ConsoleListen: "127.0.0.1:9090",
+		Auth: AuthConfig{
+			Username: "admin",
+			Password: "admin",
+		},
 		DefaultAction: rules.ActionDirect,
 		Upstreams:     []UpstreamConfig{},
 		Rules:         []RuleConfig{},
@@ -104,6 +114,12 @@ func (c *Config) Validate() error {
 
 	if c.ProxyListen == "" {
 		return errors.New("proxy_listen cannot be empty")
+	}
+	if c.Auth.Username == "" {
+		c.Auth.Username = "admin"
+	}
+	if c.Auth.Password == "" {
+		c.Auth.Password = "admin"
 	}
 
 	if c.DefaultAction == "" {

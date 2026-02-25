@@ -48,6 +48,7 @@ type Store struct {
 
 	mu     sync.RWMutex
 	events []Event
+	subs   map[chan Event]struct{}
 
 	inFlight      atomic.Int64
 	totalRequests atomic.Int64
@@ -64,7 +65,7 @@ func NewStore(capacity int, ttl time.Duration) *Store {
 		ttl = 30 * time.Minute
 	}
 
-	return &Store{capacity: capacity, ttl: ttl, events: make([]Event, 0, min(capacity, 128))}
+	return &Store{capacity: capacity, ttl: ttl, events: make([]Event, 0, min(capacity, 128)), subs: make(map[chan Event]struct{})}
 }
 
 func (s *Store) Start(requestBytes int64) {
@@ -104,6 +105,12 @@ func (s *Store) Finish(result Result) {
 	defer s.mu.Unlock()
 	s.cleanupExpiredLocked(time.Now())
 	s.events = append(s.events, event)
+	for ch := range s.subs {
+		select {
+		case ch <- event:
+		default:
+		}
+	}
 	if over := len(s.events) - s.capacity; over > 0 {
 		s.events = append([]Event(nil), s.events[over:]...)
 	}
@@ -154,6 +161,28 @@ func (s *Store) StartJanitor(ctx context.Context, interval time.Duration) {
 			}
 		}
 	}()
+}
+
+func (s *Store) Subscribe(buffer int) (<-chan Event, func()) {
+	if buffer <= 0 {
+		buffer = 32
+	}
+	ch := make(chan Event, buffer)
+
+	s.mu.Lock()
+	s.subs[ch] = struct{}{}
+	s.mu.Unlock()
+
+	unsubscribe := func() {
+		s.mu.Lock()
+		if _, ok := s.subs[ch]; ok {
+			delete(s.subs, ch)
+			close(ch)
+		}
+		s.mu.Unlock()
+	}
+
+	return ch, unsubscribe
 }
 
 func (s *Store) cleanupExpiredLocked(now time.Time) {
