@@ -4,11 +4,13 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/fanzy618/pop/internal/config"
 	"github.com/fanzy618/pop/internal/console"
 	"github.com/fanzy618/pop/internal/proxy"
+	"github.com/fanzy618/pop/internal/store"
 	"github.com/fanzy618/pop/internal/telemetry"
 	"github.com/fanzy618/pop/internal/upstream"
 )
@@ -22,16 +24,39 @@ func main() {
 		log.Fatalf("load config failed: %v", err)
 	}
 
-	upstreams, err := upstream.NewManager(cfg.BuildUpstreamConfigs())
+	sqlitePath := cfg.SQLitePath
+	if sqlitePath == "" {
+		sqlitePath = filepath.Join(filepath.Dir(*configPath), "pop.sqlite")
+	}
+
+	db, err := store.OpenSQLite(sqlitePath)
+	if err != nil {
+		log.Fatalf("open sqlite failed: %v", err)
+	}
+	defer db.Close()
+
+	upstreamItems, err := db.ListUpstreams()
+	if err != nil {
+		log.Fatalf("load upstreams from sqlite failed: %v", err)
+	}
+	ruleItems, err := db.ListRules()
+	if err != nil {
+		log.Fatalf("load rules from sqlite failed: %v", err)
+	}
+	if err := config.ValidateRuntime(upstreamItems, ruleItems); err != nil {
+		log.Fatalf("validate runtime config failed: %v", err)
+	}
+
+	upstreams, err := upstream.NewManager(config.BuildUpstreamConfigs(upstreamItems))
 	if err != nil {
 		log.Fatalf("build upstreams failed: %v", err)
 	}
-	store := telemetry.NewStore(10000, 30*time.Minute)
+	telStore := telemetry.NewStore(10000, 30*time.Minute)
 
-	handler := proxy.NewServerWithDeps(cfg.BuildMatcher(), upstreams)
-	handler.SetTelemetry(store)
+	handler := proxy.NewServerWithDeps(cfg.BuildMatcher(ruleItems), upstreams)
+	handler.SetTelemetry(telStore)
 
-	consoleHandler, err := console.NewServer(cfg, *configPath, handler, store)
+	consoleHandler, err := console.NewServer(cfg, *configPath, db, handler, telStore)
 	if err != nil {
 		log.Fatalf("build console server failed: %v", err)
 	}

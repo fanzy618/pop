@@ -1,6 +1,7 @@
 package console
 
 import (
+	"database/sql"
 	"embed"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/fanzy618/pop/internal/config"
 	"github.com/fanzy618/pop/internal/proxy"
+	"github.com/fanzy618/pop/internal/store"
 	"github.com/fanzy618/pop/internal/telemetry"
 	"github.com/fanzy618/pop/internal/upstream"
 )
@@ -22,6 +24,7 @@ var staticAssets embed.FS
 
 type Server struct {
 	configPath string
+	db         *store.SQLite
 	proxy      *proxy.Server
 	telemetry  *telemetry.Store
 
@@ -34,9 +37,12 @@ type Server struct {
 	mux http.Handler
 }
 
-func NewServer(cfg *config.Config, configPath string, proxyServer *proxy.Server, telemetryStore *telemetry.Store) (*Server, error) {
+func NewServer(cfg *config.Config, configPath string, db *store.SQLite, proxyServer *proxy.Server, telemetryStore *telemetry.Store) (*Server, error) {
 	if cfg == nil {
 		cfg = config.Default()
+	}
+	if db == nil {
+		return nil, errors.New("sqlite store is required")
 	}
 	if proxyServer == nil {
 		return nil, errors.New("proxy server is required")
@@ -47,6 +53,7 @@ func NewServer(cfg *config.Config, configPath string, proxyServer *proxy.Server,
 
 	s := &Server{
 		configPath: configPath,
+		db:         db,
 		proxy:      proxyServer,
 		telemetry:  telemetryStore,
 		cfg:        cloneConfig(cfg),
@@ -54,7 +61,10 @@ func NewServer(cfg *config.Config, configPath string, proxyServer *proxy.Server,
 		password:   cfg.Auth.Password,
 	}
 
-	if err := s.applyConfigLocked(cloneConfig(cfg)); err != nil {
+	if err := s.applyBaseConfigLocked(cloneConfig(cfg)); err != nil {
+		return nil, err
+	}
+	if err := s.rebuildRuntimeLocked(); err != nil {
 		return nil, err
 	}
 	assetsFS, err := fs.Sub(staticAssets, "assets")
@@ -64,7 +74,7 @@ func NewServer(cfg *config.Config, configPath string, proxyServer *proxy.Server,
 
 	mux := http.NewServeMux()
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assetsFS))))
-	mux.HandleFunc("/", s.handleIndex)
+	mux.HandleFunc("/", s.handlePage)
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/upstreams", s.handleUpstreams)
 	mux.HandleFunc("/api/upstreams/", s.handleUpstreamByID)
@@ -95,17 +105,27 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if r.URL.Path != "/" {
+
+	pages := map[string]string{
+		"/":           "assets/index.html",
+		"/stats":      "assets/index.html",
+		"/activities": "assets/activities.html",
+		"/rules":      "assets/rules.html",
+		"/upstreams":  "assets/upstreams.html",
+	}
+
+	assetPath, ok := pages[r.URL.Path]
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
 
-	data, err := staticAssets.ReadFile("assets/index.html")
+	data, err := staticAssets.ReadFile(assetPath)
 	if err != nil {
 		http.Error(w, "console page is unavailable", http.StatusInternalServerError)
 		return
@@ -122,7 +142,26 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		s.mu.RLock()
 		cfg := cloneConfig(s.cfg)
 		s.mu.RUnlock()
-		writeJSON(w, http.StatusOK, cfg)
+		upstreams, err := s.db.ListUpstreams()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		rules, err := s.db.ListRules()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"proxy_listen":   cfg.ProxyListen,
+			"console_listen": cfg.ConsoleListen,
+			"sqlite_path":    cfg.SQLitePath,
+			"auth":           cfg.Auth,
+			"default_action": cfg.DefaultAction,
+			"upstreams":      upstreams,
+			"rules":          rules,
+		})
 	case http.MethodPut:
 		var next config.Config
 		if err := json.NewDecoder(r.Body).Decode(&next); err != nil {
@@ -142,9 +181,11 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleUpstreams(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		s.mu.RLock()
-		items := append([]config.UpstreamConfig(nil), s.cfg.Upstreams...)
-		s.mu.RUnlock()
+		items, err := s.db.ListUpstreams()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		writeJSON(w, http.StatusOK, items)
 	case http.MethodPost:
 		var up config.UpstreamConfig
@@ -156,18 +197,15 @@ func (s *Server) handleUpstreams(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "id is required", http.StatusBadRequest)
 			return
 		}
-
-		s.mu.RLock()
-		next := cloneConfig(s.cfg)
-		s.mu.RUnlock()
-		for _, current := range next.Upstreams {
-			if current.ID == up.ID {
+		if err := s.db.CreateUpstream(up); err != nil {
+			if isUniqueConstraint(err) {
 				http.Error(w, "upstream id already exists", http.StatusConflict)
 				return
 			}
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
-		next.Upstreams = append(next.Upstreams, up)
-		if err := s.updateConfig(next); err != nil {
+		if err := s.rebuildRuntime(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -184,22 +222,6 @@ func (s *Server) handleUpstreamByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.mu.RLock()
-	next := cloneConfig(s.cfg)
-	s.mu.RUnlock()
-
-	idx := -1
-	for i := range next.Upstreams {
-		if next.Upstreams[i].ID == id {
-			idx = i
-			break
-		}
-	}
-	if idx == -1 {
-		http.NotFound(w, r)
-		return
-	}
-
 	switch r.Method {
 	case http.MethodPut:
 		var up config.UpstreamConfig
@@ -208,15 +230,33 @@ func (s *Server) handleUpstreamByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		up.ID = id
-		next.Upstreams[idx] = up
-		if err := s.updateConfig(next); err != nil {
+		if err := s.db.UpdateUpstream(id, up); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.NotFound(w, r)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := s.rebuildRuntime(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		writeJSON(w, http.StatusOK, up)
 	case http.MethodDelete:
-		next.Upstreams = append(next.Upstreams[:idx], next.Upstreams[idx+1:]...)
-		if err := s.updateConfig(next); err != nil {
+		if err := s.db.DeleteUpstream(id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.NotFound(w, r)
+				return
+			}
+			if isForeignKeyConstraint(err) {
+				http.Error(w, "upstream is referenced by rules", http.StatusConflict)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := s.rebuildRuntime(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -229,9 +269,11 @@ func (s *Server) handleUpstreamByID(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		s.mu.RLock()
-		items := append([]config.RuleConfig(nil), s.cfg.Rules...)
-		s.mu.RUnlock()
+		items, err := s.db.ListRules()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 		writeJSON(w, http.StatusOK, items)
 	case http.MethodPost:
 		var rule config.RuleConfig
@@ -243,18 +285,19 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "id is required", http.StatusBadRequest)
 			return
 		}
-
-		s.mu.RLock()
-		next := cloneConfig(s.cfg)
-		s.mu.RUnlock()
-		for _, current := range next.Rules {
-			if current.ID == rule.ID {
+		if err := s.db.CreateRule(rule); err != nil {
+			if isUniqueConstraint(err) {
 				http.Error(w, "rule id already exists", http.StatusConflict)
 				return
 			}
+			if isForeignKeyConstraint(err) {
+				http.Error(w, "unknown upstream_id", http.StatusBadRequest)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
-		next.Rules = append(next.Rules, rule)
-		if err := s.updateConfig(next); err != nil {
+		if err := s.rebuildRuntime(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -271,22 +314,6 @@ func (s *Server) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.mu.RLock()
-	next := cloneConfig(s.cfg)
-	s.mu.RUnlock()
-
-	idx := -1
-	for i := range next.Rules {
-		if next.Rules[i].ID == id {
-			idx = i
-			break
-		}
-	}
-	if idx == -1 {
-		http.NotFound(w, r)
-		return
-	}
-
 	switch r.Method {
 	case http.MethodPut:
 		var rule config.RuleConfig
@@ -295,15 +322,33 @@ func (s *Server) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rule.ID = id
-		next.Rules[idx] = rule
-		if err := s.updateConfig(next); err != nil {
+		if err := s.db.UpdateRule(id, rule); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.NotFound(w, r)
+				return
+			}
+			if isForeignKeyConstraint(err) {
+				http.Error(w, "unknown upstream_id", http.StatusBadRequest)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := s.rebuildRuntime(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		writeJSON(w, http.StatusOK, rule)
 	case http.MethodDelete:
-		next.Rules = append(next.Rules[:idx], next.Rules[idx+1:]...)
-		if err := s.updateConfig(next); err != nil {
+		if err := s.db.DeleteRule(id); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				http.NotFound(w, r)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := s.rebuildRuntime(); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -328,26 +373,7 @@ func (s *Server) handleRuleReorder(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid json", http.StatusBadRequest)
 		return
 	}
-
-	s.mu.RLock()
-	next := cloneConfig(s.cfg)
-	s.mu.RUnlock()
-
-	index := make(map[string]int, len(req.IDs))
-	for i, id := range req.IDs {
-		index[id] = i + 1
-	}
-	for i := range next.Rules {
-		if order, ok := index[next.Rules[i].ID]; ok {
-			next.Rules[i].Order = order
-		}
-	}
-
-	if err := s.updateConfig(next); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "reorder_disabled": true})
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
@@ -412,23 +438,47 @@ func (s *Server) handleActivitiesStream(w http.ResponseWriter, r *http.Request) 
 func (s *Server) updateConfig(next *config.Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.applyConfigLocked(next)
+	if err := s.applyBaseConfigLocked(next); err != nil {
+		return err
+	}
+	return s.rebuildRuntimeLocked()
 }
 
-func (s *Server) applyConfigLocked(next *config.Config) error {
-	next = cloneConfig(next)
-	if err := next.Validate(); err != nil {
+func (s *Server) rebuildRuntime() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.rebuildRuntimeLocked()
+}
+
+func (s *Server) rebuildRuntimeLocked() error {
+	upstreamItems, err := s.db.ListUpstreams()
+	if err != nil {
+		return err
+	}
+	ruleItems, err := s.db.ListRules()
+	if err != nil {
+		return err
+	}
+	if err := config.ValidateRuntime(upstreamItems, ruleItems); err != nil {
 		return err
 	}
 
-	mgr, err := upstream.NewManager(next.BuildUpstreamConfigs())
+	mgr, err := upstream.NewManager(config.BuildUpstreamConfigs(upstreamItems))
 	if err != nil {
 		return err
 	}
 
-	s.proxy.SetMatcher(next.BuildMatcher())
+	s.proxy.SetMatcher(s.cfg.BuildMatcher(ruleItems))
 	s.proxy.SetUpstreams(mgr)
 	s.proxy.SetTelemetry(s.telemetry)
+	return nil
+}
+
+func (s *Server) applyBaseConfigLocked(next *config.Config) error {
+	next = cloneConfig(next)
+	if err := next.Validate(); err != nil {
+		return err
+	}
 
 	if s.configPath != "" {
 		if err := config.Save(s.configPath, next); err != nil {
@@ -440,6 +490,22 @@ func (s *Server) applyConfigLocked(next *config.Config) error {
 	s.username = next.Auth.Username
 	s.password = next.Auth.Password
 	return nil
+}
+
+func isUniqueConstraint(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unique") || strings.Contains(msg, "constraint failed")
+}
+
+func isForeignKeyConstraint(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "foreign key")
 }
 
 func cloneConfig(in *config.Config) *config.Config {

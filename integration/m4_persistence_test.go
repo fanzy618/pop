@@ -10,6 +10,7 @@ import (
 	"github.com/fanzy618/pop/internal/config"
 	"github.com/fanzy618/pop/internal/proxy"
 	"github.com/fanzy618/pop/internal/rules"
+	"github.com/fanzy618/pop/internal/store"
 	"github.com/fanzy618/pop/internal/upstream"
 )
 
@@ -17,13 +18,22 @@ func TestConfigPersistsAcrossRestart(t *testing.T) {
 	t.Parallel()
 
 	configPath := filepath.Join(t.TempDir(), "pop.json")
+	dbPath := filepath.Join(t.TempDir(), "pop.sqlite")
 	initial := config.Default()
-	initial.Rules = []config.RuleConfig{
-		{ID: "block-ads", Enabled: true, Order: 1, Pattern: "*ads*", Action: rules.ActionBlock, BlockStatus: http.StatusGone},
-	}
+	initial.SQLitePath = dbPath
 
 	if err := config.Save(configPath, initial); err != nil {
 		t.Fatalf("save config: %v", err)
+	}
+	db, err := store.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.CreateRule(config.RuleConfig{ID: "block-ads", Enabled: true, Pattern: "*ads*", Action: rules.ActionBlock, BlockStatus: http.StatusGone}); err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close sqlite: %v", err)
 	}
 
 	check := func() {
@@ -31,13 +41,26 @@ func TestConfigPersistsAcrossRestart(t *testing.T) {
 		if err != nil {
 			t.Fatalf("load config: %v", err)
 		}
+		db, err := store.OpenSQLite(loaded.SQLitePath)
+		if err != nil {
+			t.Fatalf("open sqlite: %v", err)
+		}
+		defer db.Close()
+		upstreamItems, err := db.ListUpstreams()
+		if err != nil {
+			t.Fatalf("list upstreams: %v", err)
+		}
+		ruleItems, err := db.ListRules()
+		if err != nil {
+			t.Fatalf("list rules: %v", err)
+		}
 
-		mgr, err := upstream.NewManager(loaded.BuildUpstreamConfigs())
+		mgr, err := upstream.NewManager(config.BuildUpstreamConfigs(upstreamItems))
 		if err != nil {
 			t.Fatalf("build upstream manager: %v", err)
 		}
 
-		pop := httptest.NewServer(proxy.NewServerWithDeps(loaded.BuildMatcher(), mgr))
+		pop := httptest.NewServer(proxy.NewServerWithDeps(loaded.BuildMatcher(ruleItems), mgr))
 		defer pop.Close()
 
 		proxyURL, err := url.Parse(pop.URL)

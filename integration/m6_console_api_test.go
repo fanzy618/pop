@@ -14,13 +14,14 @@ import (
 	"github.com/fanzy618/pop/internal/config"
 	"github.com/fanzy618/pop/internal/console"
 	"github.com/fanzy618/pop/internal/proxy"
+	"github.com/fanzy618/pop/internal/store"
 	"github.com/fanzy618/pop/internal/telemetry"
 )
 
 func TestConsoleAuthRequired(t *testing.T) {
 	t.Parallel()
 
-	consoleURL, _, _, _ := setupConsoleAndProxy(t)
+	consoleURL, _, _, _, _ := setupConsoleAndProxy(t)
 
 	resp, err := http.Get(consoleURL + "/api/stats")
 	if err != nil {
@@ -36,7 +37,7 @@ func TestConsoleAuthRequired(t *testing.T) {
 func TestConsoleIndexAndAssets(t *testing.T) {
 	t.Parallel()
 
-	consoleURL, _, _, authClient := setupConsoleAndProxy(t)
+	consoleURL, _, _, _, authClient := setupConsoleAndProxy(t)
 
 	indexResp, err := authClient.Get(consoleURL + "/")
 	if err != nil {
@@ -65,10 +66,10 @@ func TestConsoleIndexAndAssets(t *testing.T) {
 func TestConsoleRulesCRUDAndReorder(t *testing.T) {
 	t.Parallel()
 
-	consoleURL, _, cfgPath, authClient := setupConsoleAndProxy(t)
+	consoleURL, _, _, dbPath, authClient := setupConsoleAndProxy(t)
 
-	rule1 := map[string]any{"id": "r1", "enabled": true, "order": 2, "pattern": "alpha.test", "action": "DIRECT"}
-	rule2 := map[string]any{"id": "r2", "enabled": true, "order": 1, "pattern": "*ads*", "action": "BLOCK", "block_status": 410}
+	rule1 := map[string]any{"id": "r1", "enabled": true, "pattern": "alpha.test", "action": "DIRECT"}
+	rule2 := map[string]any{"id": "r2", "enabled": true, "pattern": "*ads*", "action": "BLOCK", "block_status": 410}
 
 	postJSON(t, authClient, consoleURL+"/api/rules", rule1, http.StatusCreated)
 	postJSON(t, authClient, consoleURL+"/api/rules", rule2, http.StatusCreated)
@@ -85,27 +86,31 @@ func TestConsoleRulesCRUDAndReorder(t *testing.T) {
 		t.Fatalf("decode rules: %v", err)
 	}
 
-	orders := map[string]int{}
-	for _, item := range rulesList {
-		orders[item.ID] = item.Order
+	if len(rulesList) != 2 {
+		t.Fatalf("rules length=%d, want 2", len(rulesList))
 	}
-	if orders["r1"] != 1 || orders["r2"] != 2 {
-		t.Fatalf("unexpected rules order map: %+v", orders)
+	if rulesList[0].ID != "r2" || rulesList[1].ID != "r1" {
+		t.Fatalf("unexpected rules order: %+v", rulesList)
 	}
 
-	persisted, err := config.Load(cfgPath)
+	db, err := store.OpenSQLite(dbPath)
 	if err != nil {
-		t.Fatalf("load persisted config: %v", err)
+		t.Fatalf("open sqlite: %v", err)
 	}
-	if len(persisted.Rules) != 2 {
-		t.Fatalf("persisted rules length=%d, want 2", len(persisted.Rules))
+	defer db.Close()
+	persistedRules, err := db.ListRules()
+	if err != nil {
+		t.Fatalf("list persisted rules: %v", err)
+	}
+	if len(persistedRules) != 2 {
+		t.Fatalf("persisted rules length=%d, want 2", len(persistedRules))
 	}
 }
 
 func TestConsoleStatsActivitiesAndSSE(t *testing.T) {
 	t.Parallel()
 
-	consoleURL, proxyURL, _, authClient := setupConsoleAndProxy(t)
+	consoleURL, proxyURL, _, _, authClient := setupConsoleAndProxy(t)
 
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok"))
@@ -184,19 +189,26 @@ func TestConsoleStatsActivitiesAndSSE(t *testing.T) {
 	}
 }
 
-func setupConsoleAndProxy(t *testing.T) (consoleURL string, proxyURL string, configPath string, authClient *http.Client) {
+func setupConsoleAndProxy(t *testing.T) (consoleURL string, proxyURL string, configPath string, dbPath string, authClient *http.Client) {
 	t.Helper()
 
 	cfgPath := filepath.Join(t.TempDir(), "pop.json")
+	dbPath = filepath.Join(t.TempDir(), "pop.sqlite")
 	cfg := config.Default()
 	cfg.Auth.Username = "admin"
 	cfg.Auth.Password = "admin"
+	cfg.SQLitePath = dbPath
 
 	proxyServer := proxy.NewServer()
-	store := telemetry.NewStore(1000, time.Minute)
-	proxyServer.SetTelemetry(store)
+	telStore := telemetry.NewStore(1000, time.Minute)
+	proxyServer.SetTelemetry(telStore)
+	db, err := store.OpenSQLite(dbPath)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
 
-	consoleServer, err := console.NewServer(cfg, cfgPath, proxyServer, store)
+	consoleServer, err := console.NewServer(cfg, cfgPath, db, proxyServer, telStore)
 	if err != nil {
 		t.Fatalf("new console server: %v", err)
 	}
@@ -214,7 +226,7 @@ func setupConsoleAndProxy(t *testing.T) (consoleURL string, proxyURL string, con
 		return transport.RoundTrip(req2)
 	})}
 
-	return consoleHTTP.URL, proxyHTTP.URL, cfgPath, authClient
+	return consoleHTTP.URL, proxyHTTP.URL, cfgPath, dbPath, authClient
 }
 
 func postJSON(t *testing.T, client *http.Client, url string, payload any, wantStatus int) {

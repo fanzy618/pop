@@ -17,13 +17,8 @@ func TestSaveAndLoadRoundTrip(t *testing.T) {
 	cfg := &Config{
 		ProxyListen:   "127.0.0.1:18080",
 		ConsoleListen: "127.0.0.1:19090",
+		SQLitePath:    "./data/pop.sqlite",
 		DefaultAction: rules.ActionDirect,
-		Upstreams: []UpstreamConfig{
-			{ID: "A", URL: "http://127.0.0.1:8081", Enabled: true},
-		},
-		Rules: []RuleConfig{
-			{ID: "r1", Enabled: true, Order: 1, Pattern: "*.example.com", Action: rules.ActionProxy, UpstreamID: "A"},
-		},
 	}
 
 	if err := Save(path, cfg); err != nil {
@@ -38,18 +33,18 @@ func TestSaveAndLoadRoundTrip(t *testing.T) {
 	if loaded.ProxyListen != cfg.ProxyListen {
 		t.Fatalf("proxy listen = %q, want %q", loaded.ProxyListen, cfg.ProxyListen)
 	}
-	if len(loaded.Rules) != 1 || loaded.Rules[0].UpstreamID != "A" {
-		t.Fatalf("unexpected loaded rules: %+v", loaded.Rules)
+	if loaded.SQLitePath != cfg.SQLitePath {
+		t.Fatalf("sqlite path = %q, want %q", loaded.SQLitePath, cfg.SQLitePath)
 	}
 }
 
 func TestValidateRejectsNonHTTPUpstream(t *testing.T) {
 	t.Parallel()
 
-	cfg := Default()
-	cfg.Upstreams = []UpstreamConfig{{ID: "A", URL: "socks5://127.0.0.1:1080", Enabled: true}}
-
-	if err := cfg.Validate(); err == nil {
+	if err := ValidateRuntime(
+		[]UpstreamConfig{{ID: "A", URL: "socks5://127.0.0.1:1080", Enabled: true}},
+		nil,
+	); err == nil {
 		t.Fatalf("expected validate to reject non-http upstream")
 	}
 }

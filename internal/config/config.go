@@ -14,12 +14,11 @@ import (
 )
 
 type Config struct {
-	ProxyListen   string           `json:"proxy_listen"`
-	ConsoleListen string           `json:"console_listen"`
-	Auth          AuthConfig       `json:"auth"`
-	DefaultAction rules.Action     `json:"default_action"`
-	Upstreams     []UpstreamConfig `json:"upstreams"`
-	Rules         []RuleConfig     `json:"rules"`
+	ProxyListen   string       `json:"proxy_listen"`
+	ConsoleListen string       `json:"console_listen"`
+	SQLitePath    string       `json:"sqlite_path,omitempty"`
+	Auth          AuthConfig   `json:"auth"`
+	DefaultAction rules.Action `json:"default_action"`
 }
 
 type AuthConfig struct {
@@ -36,11 +35,11 @@ type UpstreamConfig struct {
 type RuleConfig struct {
 	ID          string       `json:"id"`
 	Enabled     bool         `json:"enabled"`
-	Order       int          `json:"order"`
 	Pattern     string       `json:"pattern"`
 	Action      rules.Action `json:"action"`
 	UpstreamID  string       `json:"upstream_id,omitempty"`
 	BlockStatus int          `json:"block_status,omitempty"`
+	CreatedAt   int64        `json:"created_at,omitempty"`
 }
 
 func Default() *Config {
@@ -52,8 +51,6 @@ func Default() *Config {
 			Password: "admin",
 		},
 		DefaultAction: rules.ActionDirect,
-		Upstreams:     []UpstreamConfig{},
-		Rules:         []RuleConfig{},
 	}
 }
 
@@ -130,8 +127,12 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("unsupported default action: %q", c.DefaultAction)
 	}
 
-	upstreamIDs := make(map[string]struct{})
-	for _, up := range c.Upstreams {
+	return nil
+}
+
+func ValidateRuntime(upstreams []UpstreamConfig, rulesCfg []RuleConfig) error {
+	upstreamIDs := make(map[string]struct{}, len(upstreams))
+	for _, up := range upstreams {
 		if up.ID == "" {
 			return errors.New("upstream id cannot be empty")
 		}
@@ -144,9 +145,9 @@ func (c *Config) Validate() error {
 		upstreamIDs[up.ID] = struct{}{}
 	}
 
-	for _, rule := range c.Rules {
-		if !rule.Enabled {
-			continue
+	for _, rule := range rulesCfg {
+		if rule.ID == "" {
+			return errors.New("rule id cannot be empty")
 		}
 		if rule.Pattern == "" {
 			return fmt.Errorf("rule %s pattern cannot be empty", rule.ID)
@@ -154,8 +155,8 @@ func (c *Config) Validate() error {
 		switch rule.Action {
 		case rules.ActionDirect:
 		case rules.ActionBlock:
-			if rule.BlockStatus == 0 {
-				rule.BlockStatus = 404
+			if rule.BlockStatus < 0 || rule.BlockStatus > 599 {
+				return fmt.Errorf("rule %s has invalid block_status", rule.ID)
 			}
 		case rules.ActionProxy:
 			if rule.UpstreamID == "" {
@@ -172,11 +173,14 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-func (c *Config) BuildMatcher() *rules.Matcher {
-	ordered := make([]RuleConfig, 0, len(c.Rules))
-	ordered = append(ordered, c.Rules...)
+func (c *Config) BuildMatcher(rulesCfg []RuleConfig) *rules.Matcher {
+	ordered := make([]RuleConfig, 0, len(rulesCfg))
+	ordered = append(ordered, rulesCfg...)
 	sort.SliceStable(ordered, func(i, j int) bool {
-		return ordered[i].Order < ordered[j].Order
+		if ordered[i].CreatedAt == ordered[j].CreatedAt {
+			return ordered[i].ID > ordered[j].ID
+		}
+		return ordered[i].CreatedAt > ordered[j].CreatedAt
 	})
 
 	ruleSet := make([]rules.Rule, 0, len(ordered))
@@ -184,7 +188,6 @@ func (c *Config) BuildMatcher() *rules.Matcher {
 		ruleSet = append(ruleSet, rules.Rule{
 			ID:          r.ID,
 			Enabled:     r.Enabled,
-			Order:       r.Order,
 			Pattern:     r.Pattern,
 			Action:      r.Action,
 			UpstreamID:  r.UpstreamID,
@@ -195,9 +198,9 @@ func (c *Config) BuildMatcher() *rules.Matcher {
 	return rules.NewMatcher(ruleSet, rules.Decision{Action: c.DefaultAction})
 }
 
-func (c *Config) BuildUpstreamConfigs() []upstream.Config {
-	out := make([]upstream.Config, 0, len(c.Upstreams))
-	for _, up := range c.Upstreams {
+func BuildUpstreamConfigs(upstreamsCfg []UpstreamConfig) []upstream.Config {
+	out := make([]upstream.Config, 0, len(upstreamsCfg))
+	for _, up := range upstreamsCfg {
 		out = append(out, upstream.Config{
 			ID:      up.ID,
 			URL:     up.URL,

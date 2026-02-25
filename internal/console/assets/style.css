@@ -33,6 +33,37 @@ body {
   color: var(--subtle);
 }
 
+.tabs {
+  margin-top: 14px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tab {
+  color: var(--accent);
+  text-decoration: none;
+  border: 1px solid var(--line);
+  background: #fbfcf9;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.tab.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.tab:hover {
+  background: #ecf3f0;
+}
+
+.tab.active:hover {
+  background: var(--accent);
+}
+
 .layout {
   display: grid;
   gap: 14px;
@@ -49,6 +80,12 @@ body {
 .card h2 {
   margin: 0 0 12px;
   font-size: 18px;
+}
+
+.hint {
+  margin: -6px 0 12px;
+  color: var(--subtle);
+  font-size: 13px;
 }
 
 .stats-grid {
@@ -145,5 +182,14 @@ button.danger {
 
   .layout {
     padding: 0 12px 16px;
+  }
+
+  .tabs {
+    gap: 6px;
+  }
+
+  .tab {
+    font-size: 12px;
+    padding: 5px 10px;
   }
 }

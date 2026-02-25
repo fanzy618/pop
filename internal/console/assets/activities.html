@@ -3,16 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>POP 控制台 - 实时统计</title>
+  <title>POP 控制台 - 实时活动</title>
   <link rel="stylesheet" href="/assets/style.css">
 </head>
-<body data-page="stats">
+<body data-page="activities">
   <header class="topbar">
     <h1>POP 控制台</h1>
     <p>Proxy of Proxy 运行面板</p>
     <nav class="tabs" aria-label="控制台导航">
-      <a class="tab active" href="/stats">实时统计</a>
-      <a class="tab" href="/activities">实时活动</a>
+      <a class="tab" href="/stats">实时统计</a>
+      <a class="tab active" href="/activities">实时活动</a>
       <a class="tab" href="/rules">规则管理</a>
       <a class="tab" href="/upstreams">上游管理</a>
     </nav>
@@ -20,13 +20,22 @@
 
   <main class="layout">
     <section class="card">
-      <h2>实时统计</h2>
-      <div id="stats" class="stats-grid">
-        <div><span>并发中</span><strong id="st-inflight">-</strong></div>
-        <div><span>总请求</span><strong id="st-total">-</strong></div>
-        <div><span>错误数</span><strong id="st-errors">-</strong></div>
-        <div><span>入站流量</span><strong id="st-in">-</strong></div>
-        <div><span>出站流量</span><strong id="st-out">-</strong></div>
+      <h2>实时活动</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>客户端</th>
+              <th>方法</th>
+              <th>目标</th>
+              <th>动作</th>
+              <th>状态</th>
+              <th>耗时(ms)</th>
+            </tr>
+          </thead>
+          <tbody id="activity-body"></tbody>
+        </table>
       </div>
     </section>
 

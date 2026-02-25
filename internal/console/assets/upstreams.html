@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>POP 控制台 - 上游管理</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body data-page="upstreams">
+  <header class="topbar">
+    <h1>POP 控制台</h1>
+    <p>Proxy of Proxy 运行面板</p>
+    <nav class="tabs" aria-label="控制台导航">
+      <a class="tab" href="/stats">实时统计</a>
+      <a class="tab" href="/activities">实时活动</a>
+      <a class="tab" href="/rules">规则管理</a>
+      <a class="tab active" href="/upstreams">上游管理</a>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <section class="card">
+      <h2>上游管理</h2>
+      <form id="upstream-form" class="form-inline">
+        <input name="id" placeholder="上游ID" required>
+        <input name="url" placeholder="http://host:port" required>
+        <label><input name="enabled" type="checkbox" checked>启用</label>
+        <button type="submit">新增上游</button>
+      </form>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>URL</th>
+              <th>启用</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="upstreams-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <p id="msg" class="msg"></p>
+  </main>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>
