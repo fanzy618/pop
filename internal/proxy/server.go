@@ -1,16 +1,21 @@
 package proxy
 
 import (
+	"bufio"
 	"context"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/fanzy618/pop/internal/rules"
+	"github.com/fanzy618/pop/internal/upstream"
 )
 
 var hopByHopHeaders = []string{
@@ -26,11 +31,13 @@ var hopByHopHeaders = []string{
 }
 
 type Server struct {
-	transport *http.Transport
-	dialer    *net.Dialer
+	directTransport *http.Transport
+	dialer          *net.Dialer
 
 	mu      sync.RWMutex
 	matcher *rules.Matcher
+
+	upstreams *upstream.Manager
 }
 
 func NewServer() *Server {
@@ -38,12 +45,20 @@ func NewServer() *Server {
 }
 
 func NewServerWithMatcher(matcher *rules.Matcher) *Server {
+	upstreams, _ := upstream.NewManager(nil)
+	return NewServerWithDeps(matcher, upstreams)
+}
+
+func NewServerWithDeps(matcher *rules.Matcher, upstreams *upstream.Manager) *Server {
 	if matcher == nil {
 		matcher = rules.NewMatcher(nil, rules.Decision{Action: rules.ActionDirect})
 	}
+	if upstreams == nil {
+		upstreams, _ = upstream.NewManager(nil)
+	}
 
 	return &Server{
-		transport: &http.Transport{
+		directTransport: &http.Transport{
 			Proxy:                 nil,
 			DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 			ForceAttemptHTTP2:     false,
@@ -53,8 +68,9 @@ func NewServerWithMatcher(matcher *rules.Matcher) *Server {
 			ExpectContinueTimeout: 1 * time.Second,
 			ResponseHeaderTimeout: 20 * time.Second,
 		},
-		dialer:  &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second},
-		matcher: matcher,
+		dialer:    &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second},
+		matcher:   matcher,
+		upstreams: upstreams,
 	}
 }
 
@@ -80,6 +96,27 @@ func (s *Server) decide(host string) rules.Decision {
 	return matcher.Decide(host)
 }
 
+func (s *Server) SetUpstreams(manager *upstream.Manager) {
+	if manager == nil {
+		manager, _ = upstream.NewManager(nil)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.upstreams = manager
+}
+
+func (s *Server) getUpstream(id string) (*upstream.Target, bool) {
+	s.mu.RLock()
+	m := s.upstreams
+	s.mu.RUnlock()
+	if m == nil {
+		return nil, false
+	}
+
+	return m.Get(id)
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	host := matchHost(r)
 	decision := s.decide(host)
@@ -94,7 +131,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if decision.Action == rules.ActionProxy {
-		http.Error(w, "upstream proxy routing is not available yet", http.StatusBadGateway)
+		if decision.UpstreamID == "" {
+			http.Error(w, "upstream proxy id is required", http.StatusBadGateway)
+			return
+		}
+
+		target, ok := s.getUpstream(decision.UpstreamID)
+		if !ok {
+			http.Error(w, "upstream proxy is not available", http.StatusBadGateway)
+			return
+		}
+
+		if r.Method == http.MethodConnect {
+			s.handleConnectViaUpstream(w, r, target)
+			return
+		}
+
+		s.handleHTTP(w, r, target.Transport)
 		return
 	}
 
@@ -103,10 +156,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.handleHTTP(w, r)
+	s.handleHTTP(w, r, s.directTransport)
 }
 
-func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request, transport *http.Transport) {
+	if transport == nil {
+		http.Error(w, "transport unavailable", http.StatusBadGateway)
+		return
+	}
+
 	upReq := r.Clone(context.Background())
 	upReq.RequestURI = ""
 	if upReq.URL.Scheme == "" {
@@ -117,7 +175,7 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	removeHopByHopHeaders(upReq.Header)
 
-	resp, err := s.transport.RoundTrip(upReq)
+	resp, err := transport.RoundTrip(upReq)
 	if err != nil {
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 		return
@@ -128,6 +186,97 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	copyHeader(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+func (s *Server) handleConnectViaUpstream(w http.ResponseWriter, r *http.Request, target *upstream.Target) {
+	if target == nil || target.URL == nil {
+		http.Error(w, "upstream proxy is invalid", http.StatusBadGateway)
+		return
+	}
+
+	connectTarget := normalizeHost(r.Host)
+	if connectTarget == "" {
+		http.Error(w, "bad connect target", http.StatusBadRequest)
+		return
+	}
+
+	upstreamAddr := target.URL.Host
+	if _, _, err := net.SplitHostPort(upstreamAddr); err != nil {
+		upstreamAddr = net.JoinHostPort(upstreamAddr, "80")
+	}
+
+	upstreamConn, err := s.dialer.DialContext(r.Context(), "tcp", upstreamAddr)
+	if err != nil {
+		http.Error(w, "bad gateway", http.StatusBadGateway)
+		return
+	}
+
+	if err := writeUpstreamConnectRequest(upstreamConn, connectTarget, target.URL); err != nil {
+		upstreamConn.Close()
+		http.Error(w, "bad gateway", http.StatusBadGateway)
+		return
+	}
+
+	br := bufio.NewReader(upstreamConn)
+	upResp, err := http.ReadResponse(br, &http.Request{Method: http.MethodConnect})
+	if err != nil {
+		upstreamConn.Close()
+		http.Error(w, "bad gateway", http.StatusBadGateway)
+		return
+	}
+	defer upResp.Body.Close()
+
+	if upResp.StatusCode != http.StatusOK {
+		upstreamConn.Close()
+		http.Error(w, fmt.Sprintf("upstream connect failed: %d", upResp.StatusCode), http.StatusBadGateway)
+		return
+	}
+
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		upstreamConn.Close()
+		http.Error(w, "hijacking not supported", http.StatusInternalServerError)
+		return
+	}
+
+	clientConn, rw, err := hj.Hijack()
+	if err != nil {
+		upstreamConn.Close()
+		http.Error(w, "hijack failed", http.StatusInternalServerError)
+		return
+	}
+
+	_, _ = rw.WriteString("HTTP/1.1 200 Connection Established\r\n\r\n")
+	if err := rw.Flush(); err != nil {
+		clientConn.Close()
+		upstreamConn.Close()
+		return
+	}
+
+	tunnel(clientConn, upstreamConn)
+}
+
+func writeUpstreamConnectRequest(conn net.Conn, target string, upstreamURL *url.URL) error {
+	var b strings.Builder
+	b.WriteString("CONNECT ")
+	b.WriteString(target)
+	b.WriteString(" HTTP/1.1\r\nHost: ")
+	b.WriteString(target)
+	b.WriteString("\r\n")
+
+	if upstreamURL != nil && upstreamURL.User != nil {
+		username := upstreamURL.User.Username()
+		password, _ := upstreamURL.User.Password()
+		raw := username + ":" + password
+		authValue := base64.StdEncoding.EncodeToString([]byte(raw))
+		b.WriteString("Proxy-Authorization: Basic ")
+		b.WriteString(authValue)
+		b.WriteString("\r\n")
+	}
+
+	b.WriteString("\r\n")
+	_, err := conn.Write([]byte(b.String()))
+	return err
 }
 
 func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
