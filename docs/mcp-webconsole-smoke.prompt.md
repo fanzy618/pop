@@ -26,12 +26,12 @@
    - 回到 stats 页面确认“总请求”增加
    - 回到 activities 页面确认出现 example.com 的活动记录
 5) 在 rules 页面执行一次真实 CRUD：
-   - 新增规则 id=mcp-smoke-rule, pattern=smoke.pop.local, action=DIRECT
+   - 新增规则 pattern=smoke.pop.local, 路由目标选择“直连 (DIRECT)”
    - 确认列表出现该规则
    - 删除该规则
    - 确认规则被移除
 6) 在 upstreams 页面执行一次真实 CRUD：
-   - 新增上游 id=mcp-smoke-up, url=http://127.0.0.1:18080, enabled=true
+   - 新增上游 name=mcp-smoke-up(可选), url=http://127.0.0.1:18080, enabled=true
    - 确认列表出现该上游
    - 删除该上游
    - 确认上游被移除

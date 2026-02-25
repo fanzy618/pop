@@ -22,16 +22,18 @@
     <section class="card">
       <h2>上游管理</h2>
       <form id="upstream-form" class="form-inline">
-        <input name="id" placeholder="上游ID" required>
+        <input name="name" placeholder="上游名称(可选)">
         <input name="url" placeholder="http://host:port" required>
         <label><input name="enabled" type="checkbox" checked>启用</label>
         <button type="submit">新增上游</button>
+        <button id="upstream-cancel" type="button" class="secondary hidden">取消编辑</button>
       </form>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
               <th>ID</th>
+              <th>名称</th>
               <th>URL</th>
               <th>启用</th>
               <th>操作</th>

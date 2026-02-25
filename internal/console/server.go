@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -193,15 +194,14 @@ func (s *Server) handleUpstreams(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
 		}
-		if up.ID == "" {
-			http.Error(w, "id is required", http.StatusBadRequest)
+		up.ID = 0
+		up.Name = strings.TrimSpace(up.Name)
+		up.URL = strings.TrimSpace(up.URL)
+		if up.URL == "" {
+			http.Error(w, "url is required", http.StatusBadRequest)
 			return
 		}
-		if err := s.db.CreateUpstream(up); err != nil {
-			if isUniqueConstraint(err) {
-				http.Error(w, "upstream id already exists", http.StatusConflict)
-				return
-			}
+		if err := s.db.CreateUpstream(&up); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -216,8 +216,9 @@ func (s *Server) handleUpstreams(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpstreamByID(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/api/upstreams/")
-	if id == "" {
+	rawID := strings.TrimPrefix(r.URL.Path, "/api/upstreams/")
+	id, ok := parseIntPath(rawID)
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
@@ -229,6 +230,8 @@ func (s *Server) handleUpstreamByID(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
 		}
+		up.Name = strings.TrimSpace(up.Name)
+		up.URL = strings.TrimSpace(up.URL)
 		up.ID = id
 		if err := s.db.UpdateUpstream(id, up); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -281,15 +284,16 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
 		}
-		if rule.ID == "" {
-			http.Error(w, "id is required", http.StatusBadRequest)
+		rule.ID = 0
+		rule.Pattern = strings.TrimSpace(rule.Pattern)
+		if rule.Pattern == "" {
+			http.Error(w, "pattern is required", http.StatusBadRequest)
 			return
 		}
-		if err := s.db.CreateRule(rule); err != nil {
-			if isUniqueConstraint(err) {
-				http.Error(w, "rule id already exists", http.StatusConflict)
-				return
-			}
+		if rule.Action == "BLOCK" {
+			rule.BlockStatus = 404
+		}
+		if err := s.db.CreateRule(&rule); err != nil {
 			if isForeignKeyConstraint(err) {
 				http.Error(w, "unknown upstream_id", http.StatusBadRequest)
 				return
@@ -308,8 +312,9 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleRuleByID(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/api/rules/")
-	if id == "" {
+	rawID := strings.TrimPrefix(r.URL.Path, "/api/rules/")
+	id, ok := parseIntPath(rawID)
+	if !ok {
 		http.NotFound(w, r)
 		return
 	}
@@ -320,6 +325,14 @@ func (s *Server) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
+		}
+		rule.Pattern = strings.TrimSpace(rule.Pattern)
+		if rule.Pattern == "" {
+			http.Error(w, "pattern is required", http.StatusBadRequest)
+			return
+		}
+		if rule.Action == "BLOCK" {
+			rule.BlockStatus = 404
 		}
 		rule.ID = id
 		if err := s.db.UpdateRule(id, rule); err != nil {
@@ -359,7 +372,7 @@ func (s *Server) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 }
 
 type reorderRequest struct {
-	IDs []string `json:"ids"`
+	IDs []int64 `json:"ids"`
 }
 
 func (s *Server) handleRuleReorder(w http.ResponseWriter, r *http.Request) {
@@ -498,6 +511,18 @@ func isUniqueConstraint(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "unique") || strings.Contains(msg, "constraint failed")
+}
+
+func parseIntPath(raw string) (int64, bool) {
+	raw, err := url.PathUnescape(strings.TrimSpace(raw))
+	if err != nil || raw == "" {
+		return 0, false
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
 }
 
 func isForeignKeyConstraint(err error) bool {

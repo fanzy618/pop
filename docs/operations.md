@@ -20,8 +20,7 @@ go run ./cmd/pop -config ./pop.json
   - `console_listen`
   - `auth.username` / `auth.password`
   - `default_action`
-  - `upstreams[]`
-  - `rules[]`
+- 运行期规则与上游保存在 SQLite（通过 Console API 管理）
 
 ## 3. 运行期观测
 
@@ -51,7 +50,7 @@ go run ./cmd/pop -config ./pop.json
 ### 5.1 请求未按预期走上游
 
 - 检查规则顺序，是否被更前规则命中。
-- 检查 `upstream_id` 是否存在且启用。
+- 检查规则的 `upstream_id` 是否存在且上游已启用。
 - 检查上游 URL 是否 `http://` 且可达。
 
 ### 5.2 Console 返回 401
@@ -61,7 +60,7 @@ go run ./cmd/pop -config ./pop.json
 
 ### 5.3 BLOCK 状态码不符合预期
 
-- 规则未设置 `block_status` 时默认是 `404`。
+- Web Console 下 `BLOCK` 状态码固定为 `404`。
 - 检查是否命中到了其他更前规则。
 
 ### 5.4 修改配置后行为未更新

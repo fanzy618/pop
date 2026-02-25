@@ -4,7 +4,7 @@ POP is a local HTTP proxy for personal use. It decides request handling by order
 
 - `DIRECT`: connect directly
 - `PROXY`: forward through a configured upstream HTTP proxy
-- `BLOCK`: reject with configurable status code (default `404`)
+- `BLOCK`: reject with fixed status code `404` in web console
 
 If no rule matches, POP uses `default_action` (currently recommended and default: `DIRECT`).
 
@@ -51,54 +51,26 @@ go run ./cmd/pop -config ./pop.json
     "username": "admin",
     "password": "admin"
   },
-  "default_action": "DIRECT",
-  "upstreams": [
-    {
-      "id": "A",
-      "url": "http://127.0.0.1:18080",
-      "enabled": true
-    },
-    {
-      "id": "B",
-      "url": "http://127.0.0.1:18081",
-      "enabled": true
-    }
-  ],
-  "rules": [
-    {
-      "id": "internal-direct",
-      "enabled": true,
-      "order": 1,
-      "pattern": "*.corp.local",
-      "action": "DIRECT"
-    },
-    {
-      "id": "ads-block",
-      "enabled": true,
-      "order": 2,
-      "pattern": "*ads*",
-      "action": "BLOCK",
-      "block_status": 404
-    },
-    {
-      "id": "external-a",
-      "enabled": true,
-      "order": 3,
-      "pattern": "*.google.com",
-      "action": "PROXY",
-      "upstream_id": "A"
-    },
-    {
-      "id": "external-b",
-      "enabled": true,
-      "order": 4,
-      "pattern": "*.openai.com",
-      "action": "PROXY",
-      "upstream_id": "B"
-    }
-  ]
+  "default_action": "DIRECT"
 }
 ```
+
+Rules and upstreams are persisted in SQLite and managed through Console API/UI.
+
+## Console Data Model
+
+- Upstream object:
+  - `id` (database generated integer)
+  - `name` (optional)
+  - `url`
+  - `enabled`
+- Rule object:
+  - `id` (database generated integer)
+  - `pattern`
+  - `enabled`
+  - `action` (`DIRECT` / `PROXY` / `BLOCK`)
+  - `upstream_id` (required only when action is `PROXY`, references upstream numeric id)
+  - `block_status` is fixed to `404` for `BLOCK` rules created/updated via web console
 
 ## Console API
 

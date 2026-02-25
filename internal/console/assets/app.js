@@ -14,6 +14,9 @@ const rulesBody = document.getElementById("rules-body");
 const upstreamsBody = document.getElementById("upstreams-body");
 
 let rulesCache = [];
+let upstreamsCache = [];
+let editingRuleID = 0;
+let editingUpstreamID = 0;
 
 function showMsg(text, isError = false) {
   if (!msgEl) return;
@@ -54,6 +57,12 @@ function fmtTime(ts) {
   return d.toLocaleTimeString();
 }
 
+function fmtDateTime(ts) {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleString();
+}
+
 function appendActivity(ev) {
   if (!activityBody) return;
   const tr = document.createElement("tr");
@@ -72,18 +81,105 @@ function appendActivity(ev) {
   }
 }
 
+function upstreamLabel(upstream) {
+  if (!upstream) return "-";
+  const name = (upstream.name || "").trim();
+  if (name) return name;
+  return upstream.url || `#${upstream.id}`;
+}
+
+function findUpstreamByID(id) {
+  return upstreamsCache.find((up) => Number(up.id) === Number(id));
+}
+
+function routeOptionLabel(upstream) {
+  return `上游: ${upstreamLabel(upstream)} (#${upstream.id})`;
+}
+
+function ruleRouteValue(rule) {
+  if (!rule) return "DIRECT";
+  if (rule.action === "DIRECT") return "DIRECT";
+  if (rule.action === "BLOCK") return "BLOCK";
+  if (rule.action === "PROXY" && rule.upstream_id) {
+    return `UPSTREAM:${rule.upstream_id}`;
+  }
+  return "DIRECT";
+}
+
+function renderRouteOptions(selectEl, selectedValue = "DIRECT") {
+  if (!selectEl) return;
+  selectEl.innerHTML = "";
+
+  const base = [
+    { value: "DIRECT", text: "直连 (DIRECT)" },
+    { value: "BLOCK", text: "阻断 (BLOCK 404)" },
+  ];
+  base.forEach((item) => {
+    const opt = document.createElement("option");
+    opt.value = item.value;
+    opt.textContent = item.text;
+    selectEl.appendChild(opt);
+  });
+
+  upstreamsCache.forEach((up) => {
+    const opt = document.createElement("option");
+    opt.value = `UPSTREAM:${up.id}`;
+    opt.textContent = routeOptionLabel(up);
+    selectEl.appendChild(opt);
+  });
+
+  if (selectedValue.startsWith("UPSTREAM:")) {
+    const refID = Number(selectedValue.replace("UPSTREAM:", ""));
+    if (!Number.isNaN(refID) && !findUpstreamByID(refID)) {
+      const opt = document.createElement("option");
+      opt.value = selectedValue;
+      opt.textContent = `上游: #${refID} (不存在)`;
+      selectEl.appendChild(opt);
+    }
+  }
+
+  selectEl.value = selectedValue;
+}
+
+function parseRouteTarget(value) {
+  if (value === "DIRECT") {
+    return { action: "DIRECT" };
+  }
+  if (value === "BLOCK") {
+    return { action: "BLOCK", block_status: 404 };
+  }
+  if (value.startsWith("UPSTREAM:")) {
+    const upstreamID = Number(value.replace("UPSTREAM:", ""));
+    if (!Number.isInteger(upstreamID) || upstreamID <= 0) {
+      throw new Error("上游选择无效");
+    }
+    return { action: "PROXY", upstream_id: upstreamID };
+  }
+  throw new Error("动作选择无效");
+}
+
 function renderRules() {
   if (!rulesBody) return;
   rulesBody.innerHTML = "";
-  rulesCache.forEach((rule) => {
+  const items = Array.isArray(rulesCache) ? rulesCache : [];
+  items.forEach((rule) => {
     const tr = document.createElement("tr");
+    let actionText = rule.action;
+    if (rule.action === "BLOCK") {
+      actionText = "BLOCK:404";
+    } else if (rule.action === "PROXY") {
+      const up = findUpstreamByID(rule.upstream_id);
+      actionText = `PROXY(${upstreamLabel(up)})`;
+    }
+
     tr.innerHTML = `
-      <td>${fmtTime(rule.created_at)}</td>
+      <td>${fmtDateTime(rule.created_at)}</td>
       <td>${rule.id}</td>
       <td>${rule.pattern}</td>
-      <td>${rule.action}${rule.upstream_id ? `(${rule.upstream_id})` : ""}${rule.block_status ? `:${rule.block_status}` : ""}</td>
+      <td>${actionText}</td>
       <td>${rule.enabled ? "是" : "否"}</td>
       <td>
+        <button class="secondary" data-op="edit" data-id="${rule.id}">编辑</button>
         <button class="danger" data-op="del" data-id="${rule.id}">删除</button>
       </td>
     `;
@@ -91,16 +187,20 @@ function renderRules() {
   });
 }
 
-function renderUpstreams(items) {
+function renderUpstreams() {
   if (!upstreamsBody) return;
   upstreamsBody.innerHTML = "";
-  items.forEach((up) => {
+  upstreamsCache.forEach((up) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td>${up.id}</td>
+      <td>${up.name || "-"}</td>
       <td>${up.url}</td>
       <td>${up.enabled ? "是" : "否"}</td>
-      <td><button class="danger" data-up-del="${up.id}">删除</button></td>
+      <td>
+        <button class="secondary" data-up-op="edit" data-up-id="${up.id}">编辑</button>
+        <button class="danger" data-up-op="del" data-up-id="${up.id}">删除</button>
+      </td>
     `;
     upstreamsBody.appendChild(tr);
   });
@@ -123,13 +223,15 @@ async function loadActivities() {
 }
 
 async function loadRules() {
-  rulesCache = await api("/api/rules");
+  const items = await api("/api/rules");
+  rulesCache = Array.isArray(items) ? items : [];
   renderRules();
 }
 
 async function loadUpstreams() {
   const items = await api("/api/upstreams");
-  renderUpstreams(items);
+  upstreamsCache = Array.isArray(items) ? items : [];
+  renderUpstreams();
 }
 
 function startSSE() {
@@ -149,87 +251,177 @@ function startSSE() {
 
 function bindRulesEvents() {
   const ruleForm = document.getElementById("rule-form");
-  if (!ruleForm || !rulesBody) return;
+  const ruleCancel = document.getElementById("rule-cancel");
+  if (!ruleForm || !rulesBody || !ruleCancel) return;
+
+  const patternInput = ruleForm.elements.namedItem("pattern");
+  const routeTargetInput = ruleForm.elements.namedItem("route_target");
+  const enabledInput = ruleForm.elements.namedItem("enabled");
+  const submitBtn = ruleForm.querySelector("button[type='submit']");
+
+  function resetRuleForm() {
+    editingRuleID = 0;
+    ruleForm.reset();
+    if (enabledInput) enabledInput.checked = true;
+    renderRouteOptions(routeTargetInput, "DIRECT");
+    if (submitBtn) submitBtn.textContent = "新增规则";
+    ruleCancel.classList.add("hidden");
+  }
+
+  function enterRuleEdit(rule) {
+    editingRuleID = Number(rule.id);
+    if (patternInput) patternInput.value = rule.pattern || "";
+    renderRouteOptions(routeTargetInput, ruleRouteValue(rule));
+    if (enabledInput) enabledInput.checked = !!rule.enabled;
+    if (submitBtn) submitBtn.textContent = "更新规则";
+    ruleCancel.classList.remove("hidden");
+  }
+
+  ruleCancel.addEventListener("click", () => {
+    resetRuleForm();
+    showMsg("已取消规则编辑");
+  });
 
   ruleForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
     const payload = {
-      id: form.get("id").trim(),
       enabled: form.get("enabled") === "on",
-      pattern: form.get("pattern").trim(),
-      action: form.get("action"),
+      pattern: String(form.get("pattern") || "").trim(),
+      ...parseRouteTarget(String(form.get("route_target") || "DIRECT")),
     };
-    const upstreamId = form.get("upstream_id").trim();
-    const blockStatus = form.get("block_status").trim();
-    if (upstreamId) payload.upstream_id = upstreamId;
-    if (blockStatus) payload.block_status = Number(blockStatus);
 
     try {
-      await api("/api/rules", { method: "POST", body: JSON.stringify(payload) });
-      e.currentTarget.reset();
+      if (editingRuleID > 0) {
+        await api(`/api/rules/${editingRuleID}`, { method: "PUT", body: JSON.stringify(payload) });
+      } else {
+        await api("/api/rules", { method: "POST", body: JSON.stringify(payload) });
+      }
       await loadRules();
-      showMsg("规则新增成功");
+      showMsg(editingRuleID > 0 ? "规则更新成功" : "规则新增成功");
+      resetRuleForm();
     } catch (err) {
-      showMsg(`规则新增失败: ${err.message}`, true);
+      showMsg(`${editingRuleID > 0 ? "规则更新" : "规则新增"}失败: ${err.message}`, true);
     }
   });
 
   rulesBody.addEventListener("click", async (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
-    const id = btn.dataset.id;
+    const id = Number(btn.dataset.id || 0);
     const op = btn.dataset.op;
-    if (!id || !op) return;
+    if (id <= 0 || !op) return;
 
     try {
-      if (op === "del") {
-        await api(`/api/rules/${encodeURIComponent(id)}`, { method: "DELETE" });
-        await loadRules();
-        showMsg("规则已删除");
+      if (op === "edit") {
+        const rule = rulesCache.find((item) => Number(item.id) === id);
+        if (!rule) return;
+        enterRuleEdit(rule);
+        showMsg(`正在编辑规则: ${id}`);
         return;
+      }
+
+      if (op === "del") {
+        await api(`/api/rules/${id}`, { method: "DELETE" });
+        await loadRules();
+        if (id === editingRuleID) {
+          resetRuleForm();
+        }
+        showMsg("规则已删除");
       }
     } catch (err) {
       showMsg(`规则操作失败: ${err.message}`, true);
     }
   });
+
+  resetRuleForm();
 }
 
 function bindUpstreamEvents() {
   const upstreamForm = document.getElementById("upstream-form");
-  if (!upstreamForm || !upstreamsBody) return;
+  const upstreamCancel = document.getElementById("upstream-cancel");
+  if (!upstreamForm || !upstreamsBody || !upstreamCancel) return;
+
+  const nameInput = upstreamForm.elements.namedItem("name");
+  const urlInput = upstreamForm.elements.namedItem("url");
+  const enabledInput = upstreamForm.elements.namedItem("enabled");
+  const submitBtn = upstreamForm.querySelector("button[type='submit']");
+
+  function resetUpstreamForm() {
+    editingUpstreamID = 0;
+    upstreamForm.reset();
+    if (enabledInput) enabledInput.checked = true;
+    if (submitBtn) submitBtn.textContent = "新增上游";
+    upstreamCancel.classList.add("hidden");
+  }
+
+  function enterUpstreamEdit(item) {
+    editingUpstreamID = Number(item.id);
+    if (nameInput) nameInput.value = item.name || "";
+    if (urlInput) urlInput.value = item.url || "";
+    if (enabledInput) enabledInput.checked = !!item.enabled;
+    if (submitBtn) submitBtn.textContent = "更新上游";
+    upstreamCancel.classList.remove("hidden");
+  }
+
+  upstreamCancel.addEventListener("click", () => {
+    resetUpstreamForm();
+    showMsg("已取消上游编辑");
+  });
 
   upstreamForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     const form = new FormData(e.currentTarget);
     const payload = {
-      id: form.get("id").trim(),
-      url: form.get("url").trim(),
+      name: String(form.get("name") || "").trim(),
+      url: String(form.get("url") || "").trim(),
       enabled: form.get("enabled") === "on",
     };
 
     try {
-      await api("/api/upstreams", { method: "POST", body: JSON.stringify(payload) });
-      e.currentTarget.reset();
+      if (editingUpstreamID > 0) {
+        await api(`/api/upstreams/${editingUpstreamID}`, { method: "PUT", body: JSON.stringify(payload) });
+      } else {
+        await api("/api/upstreams", { method: "POST", body: JSON.stringify(payload) });
+      }
       await loadUpstreams();
-      showMsg("上游新增成功");
+      showMsg(editingUpstreamID > 0 ? "上游更新成功" : "上游新增成功");
+      resetUpstreamForm();
     } catch (err) {
-      showMsg(`上游新增失败: ${err.message}`, true);
+      showMsg(`${editingUpstreamID > 0 ? "上游更新" : "上游新增"}失败: ${err.message}`, true);
     }
   });
 
   upstreamsBody.addEventListener("click", async (e) => {
-    const btn = e.target.closest("button[data-up-del]");
+    const btn = e.target.closest("button[data-up-op]");
     if (!btn) return;
-    const id = btn.dataset.upDel;
+    const op = btn.dataset.upOp;
+    const id = Number(btn.dataset.upId || 0);
+    if (id <= 0 || !op) return;
+
     try {
-      await api(`/api/upstreams/${encodeURIComponent(id)}`, { method: "DELETE" });
-      await loadUpstreams();
-      showMsg("上游已删除");
+      if (op === "edit") {
+        const item = upstreamsCache.find((up) => Number(up.id) === id);
+        if (!item) return;
+        enterUpstreamEdit(item);
+        showMsg(`正在编辑上游: ${id}`);
+        return;
+      }
+
+      if (op === "del") {
+        await api(`/api/upstreams/${id}`, { method: "DELETE" });
+        await loadUpstreams();
+        if (id === editingUpstreamID) {
+          resetUpstreamForm();
+        }
+        showMsg("上游已删除");
+      }
     } catch (err) {
       showMsg(`上游删除失败: ${err.message}`, true);
     }
   });
+
+  resetUpstreamForm();
 }
 
 async function init() {
@@ -251,6 +443,7 @@ async function init() {
     }
 
     if (page === "rules") {
+      await loadUpstreams();
       bindRulesEvents();
       await loadRules();
       showMsg("规则页已就绪");

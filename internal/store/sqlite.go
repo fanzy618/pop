@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -47,49 +48,217 @@ func (s *SQLite) Close() error {
 }
 
 func (s *SQLite) init() error {
+	if _, err := s.db.Exec(`PRAGMA foreign_keys = ON;`); err != nil {
+		return fmt.Errorf("enable sqlite foreign keys: %w", err)
+	}
+	return s.ensureSchema()
+}
+
+func (s *SQLite) ensureSchema() error {
+	hasUpstreams, err := s.tableExists("upstreams")
+	if err != nil {
+		return err
+	}
+	hasRules, err := s.tableExists("rules")
+	if err != nil {
+		return err
+	}
+
+	if !hasUpstreams && !hasRules {
+		return s.createSchema()
+	}
+
+	legacy, err := s.isLegacySchema()
+	if err != nil {
+		return err
+	}
+	if legacy {
+		if err := s.migrateLegacySchema(); err != nil {
+			return err
+		}
+	}
+
+	return s.ensureIndexes()
+}
+
+func (s *SQLite) createSchema() error {
 	stmts := []string{
-		`PRAGMA foreign_keys = ON;`,
 		`CREATE TABLE IF NOT EXISTS upstreams (
-      id TEXT PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT,
       url TEXT NOT NULL,
       enabled INTEGER NOT NULL,
       created_at INTEGER NOT NULL
     );`,
 		`CREATE TABLE IF NOT EXISTS rules (
-      id TEXT PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
       enabled INTEGER NOT NULL,
       pattern TEXT NOT NULL,
       action TEXT NOT NULL,
-      upstream_id TEXT,
+      upstream_ref INTEGER,
       block_status INTEGER,
       created_at INTEGER NOT NULL,
-      FOREIGN KEY(upstream_id) REFERENCES upstreams(id) ON DELETE RESTRICT
+      FOREIGN KEY(upstream_ref) REFERENCES upstreams(id) ON DELETE RESTRICT
     );`,
-		`CREATE INDEX IF NOT EXISTS idx_rules_created_at_desc ON rules(created_at DESC);`,
-		`CREATE INDEX IF NOT EXISTS idx_rules_upstream_id ON rules(upstream_id);`,
 	}
-
 	for _, stmt := range stmts {
 		if _, err := s.db.Exec(stmt); err != nil {
-			return fmt.Errorf("init sqlite schema: %w", err)
+			return fmt.Errorf("create sqlite schema: %w", err)
+		}
+	}
+	return s.ensureIndexes()
+}
+
+func (s *SQLite) ensureIndexes() error {
+	stmts := []string{
+		`CREATE INDEX IF NOT EXISTS idx_rules_created_at_desc ON rules(created_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_rules_upstream_ref ON rules(upstream_ref);`,
+	}
+	for _, stmt := range stmts {
+		if _, err := s.db.Exec(stmt); err != nil {
+			return fmt.Errorf("ensure sqlite index: %w", err)
 		}
 	}
 	return nil
 }
 
+func (s *SQLite) tableExists(name string) (bool, error) {
+	var c int
+	err := s.db.QueryRow(`SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name=?`, name).Scan(&c)
+	if err != nil {
+		return false, fmt.Errorf("check table %s exists: %w", name, err)
+	}
+	return c > 0, nil
+}
+
+func (s *SQLite) isLegacySchema() (bool, error) {
+	upCols, err := s.tableColumns("upstreams")
+	if err != nil {
+		return false, err
+	}
+	ruleCols, err := s.tableColumns("rules")
+	if err != nil {
+		return false, err
+	}
+
+	upIDType := strings.ToUpper(upCols["id"])
+	_, hasName := upCols["name"]
+	_, hasUpstreamRef := ruleCols["upstream_ref"]
+
+	if strings.Contains(upIDType, "TEXT") || !hasName || !hasUpstreamRef {
+		return true, nil
+	}
+	return false, nil
+}
+
+func (s *SQLite) tableColumns(table string) (map[string]string, error) {
+	rows, err := s.db.Query(`PRAGMA table_info(` + table + `);`)
+	if err != nil {
+		return nil, fmt.Errorf("load table info for %s: %w", table, err)
+	}
+	defer rows.Close()
+
+	cols := make(map[string]string)
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var dflt sql.NullString
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			return nil, fmt.Errorf("scan table info for %s: %w", table, err)
+		}
+		cols[name] = typ
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate table info for %s: %w", table, err)
+	}
+	return cols, nil
+}
+
+func (s *SQLite) migrateLegacySchema() error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin schema migration: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	stmts := []string{
+		`ALTER TABLE rules RENAME TO rules_old;`,
+		`ALTER TABLE upstreams RENAME TO upstreams_old;`,
+		`CREATE TABLE upstreams (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT,
+      url TEXT NOT NULL,
+      enabled INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    );`,
+		`CREATE TABLE rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      enabled INTEGER NOT NULL,
+      pattern TEXT NOT NULL,
+      action TEXT NOT NULL,
+      upstream_ref INTEGER,
+      block_status INTEGER,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY(upstream_ref) REFERENCES upstreams(id) ON DELETE RESTRICT
+    );`,
+		`INSERT INTO upstreams(name, url, enabled, created_at)
+     SELECT id, url, enabled, created_at FROM upstreams_old;`,
+		`INSERT INTO rules(enabled, pattern, action, upstream_ref, block_status, created_at)
+     SELECT ro.enabled,
+            ro.pattern,
+            ro.action,
+            CASE
+              WHEN ro.upstream_id IS NULL OR ro.upstream_id = '' THEN NULL
+              ELSE u.id
+            END,
+            CASE
+              WHEN ro.action = 'BLOCK' THEN COALESCE(NULLIF(ro.block_status, 0), 404)
+              ELSE ro.block_status
+            END,
+            ro.created_at
+     FROM rules_old ro
+     LEFT JOIN upstreams u ON u.name = ro.upstream_id;`,
+		`DROP TABLE rules_old;`,
+		`DROP TABLE upstreams_old;`,
+		`CREATE INDEX IF NOT EXISTS idx_rules_created_at_desc ON rules(created_at DESC);`,
+		`CREATE INDEX IF NOT EXISTS idx_rules_upstream_ref ON rules(upstream_ref);`,
+	}
+
+	for _, stmt := range stmts {
+		if _, err = tx.Exec(stmt); err != nil {
+			return fmt.Errorf("run schema migration statement: %w", err)
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit schema migration: %w", err)
+	}
+	return nil
+}
+
 func (s *SQLite) ListUpstreams() ([]config.UpstreamConfig, error) {
-	rows, err := s.db.Query(`SELECT id, url, enabled FROM upstreams ORDER BY created_at DESC, id DESC`)
+	rows, err := s.db.Query(`SELECT id, name, url, enabled FROM upstreams ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("query upstreams: %w", err)
 	}
 	defer rows.Close()
 
-	var items []config.UpstreamConfig
+	items := make([]config.UpstreamConfig, 0)
 	for rows.Next() {
 		var item config.UpstreamConfig
+		var name sql.NullString
 		var enabled int
-		if err := rows.Scan(&item.ID, &item.URL, &enabled); err != nil {
+		if err := rows.Scan(&item.ID, &name, &item.URL, &enabled); err != nil {
 			return nil, fmt.Errorf("scan upstream: %w", err)
+		}
+		if name.Valid {
+			item.Name = name.String
 		}
 		item.Enabled = enabled != 0
 		items = append(items, item)
@@ -100,16 +269,16 @@ func (s *SQLite) ListUpstreams() ([]config.UpstreamConfig, error) {
 	return items, nil
 }
 
-func (s *SQLite) CreateUpstream(item config.UpstreamConfig) error {
-	if item.ID == "" {
-		return errors.New("id is required")
+func (s *SQLite) CreateUpstream(item *config.UpstreamConfig) error {
+	if item == nil {
+		return errors.New("upstream is required")
 	}
 	if item.URL == "" {
 		return errors.New("url is required")
 	}
-	_, err := s.db.Exec(
-		`INSERT INTO upstreams(id, url, enabled, created_at) VALUES (?, ?, ?, ?)`,
-		item.ID,
+	res, err := s.db.Exec(
+		`INSERT INTO upstreams(name, url, enabled, created_at) VALUES (?, ?, ?, ?)`,
+		nullString(item.Name),
 		item.URL,
 		boolToInt(item.Enabled),
 		time.Now().UnixMilli(),
@@ -117,14 +286,25 @@ func (s *SQLite) CreateUpstream(item config.UpstreamConfig) error {
 	if err != nil {
 		return fmt.Errorf("insert upstream: %w", err)
 	}
+	insertID, err := res.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("read inserted upstream id: %w", err)
+	}
+	item.ID = insertID
 	return nil
 }
 
-func (s *SQLite) UpdateUpstream(id string, item config.UpstreamConfig) error {
-	if id == "" {
+func (s *SQLite) UpdateUpstream(id int64, item config.UpstreamConfig) error {
+	if id <= 0 {
 		return errors.New("id is required")
 	}
-	res, err := s.db.Exec(`UPDATE upstreams SET url=?, enabled=? WHERE id=?`, item.URL, boolToInt(item.Enabled), id)
+	res, err := s.db.Exec(
+		`UPDATE upstreams SET name=?, url=?, enabled=? WHERE id=?`,
+		nullString(item.Name),
+		item.URL,
+		boolToInt(item.Enabled),
+		id,
+	)
 	if err != nil {
 		return fmt.Errorf("update upstream: %w", err)
 	}
@@ -135,8 +315,8 @@ func (s *SQLite) UpdateUpstream(id string, item config.UpstreamConfig) error {
 	return nil
 }
 
-func (s *SQLite) DeleteUpstream(id string) error {
-	if id == "" {
+func (s *SQLite) DeleteUpstream(id int64) error {
+	if id <= 0 {
 		return errors.New("id is required")
 	}
 	res, err := s.db.Exec(`DELETE FROM upstreams WHERE id = ?`, id)
@@ -151,27 +331,30 @@ func (s *SQLite) DeleteUpstream(id string) error {
 }
 
 func (s *SQLite) ListRules() ([]config.RuleConfig, error) {
-	rows, err := s.db.Query(`SELECT id, enabled, pattern, action, upstream_id, block_status, created_at FROM rules ORDER BY created_at DESC, id DESC`)
+	rows, err := s.db.Query(`SELECT id, enabled, pattern, action, upstream_ref, block_status, created_at FROM rules ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("query rules: %w", err)
 	}
 	defer rows.Close()
 
-	var items []config.RuleConfig
+	items := make([]config.RuleConfig, 0)
 	for rows.Next() {
 		var item config.RuleConfig
 		var enabled int
-		var upstreamID sql.NullString
+		var upstreamID sql.NullInt64
 		var blockStatus sql.NullInt64
 		if err := rows.Scan(&item.ID, &enabled, &item.Pattern, &item.Action, &upstreamID, &blockStatus, &item.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan rule: %w", err)
 		}
 		item.Enabled = enabled != 0
 		if upstreamID.Valid {
-			item.UpstreamID = upstreamID.String
+			item.UpstreamID = upstreamID.Int64
 		}
 		if blockStatus.Valid {
 			item.BlockStatus = int(blockStatus.Int64)
+		}
+		if item.Action == "BLOCK" && item.BlockStatus == 0 {
+			item.BlockStatus = 404
 		}
 		items = append(items, item)
 	}
@@ -181,39 +364,49 @@ func (s *SQLite) ListRules() ([]config.RuleConfig, error) {
 	return items, nil
 }
 
-func (s *SQLite) CreateRule(item config.RuleConfig) error {
-	if item.ID == "" {
-		return errors.New("id is required")
+func (s *SQLite) CreateRule(item *config.RuleConfig) error {
+	if item == nil {
+		return errors.New("rule is required")
 	}
 	if item.Pattern == "" {
 		return errors.New("pattern is required")
 	}
-	_, err := s.db.Exec(
-		`INSERT INTO rules(id, enabled, pattern, action, upstream_id, block_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		item.ID,
+	if item.Action == "BLOCK" {
+		item.BlockStatus = 404
+	}
+	res, err := s.db.Exec(
+		`INSERT INTO rules(enabled, pattern, action, upstream_ref, block_status, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
 		boolToInt(item.Enabled),
 		item.Pattern,
 		item.Action,
-		nullString(item.UpstreamID),
+		nullInt64(item.UpstreamID),
 		nullInt(item.BlockStatus),
 		time.Now().UnixMilli(),
 	)
 	if err != nil {
 		return fmt.Errorf("insert rule: %w", err)
 	}
+	insertID, err := res.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("read inserted rule id: %w", err)
+	}
+	item.ID = insertID
 	return nil
 }
 
-func (s *SQLite) UpdateRule(id string, item config.RuleConfig) error {
-	if id == "" {
+func (s *SQLite) UpdateRule(id int64, item config.RuleConfig) error {
+	if id <= 0 {
 		return errors.New("id is required")
 	}
+	if item.Action == "BLOCK" {
+		item.BlockStatus = 404
+	}
 	res, err := s.db.Exec(
-		`UPDATE rules SET enabled=?, pattern=?, action=?, upstream_id=?, block_status=? WHERE id=?`,
+		`UPDATE rules SET enabled=?, pattern=?, action=?, upstream_ref=?, block_status=? WHERE id=?`,
 		boolToInt(item.Enabled),
 		item.Pattern,
 		item.Action,
-		nullString(item.UpstreamID),
+		nullInt64(item.UpstreamID),
 		nullInt(item.BlockStatus),
 		id,
 	)
@@ -227,8 +420,8 @@ func (s *SQLite) UpdateRule(id string, item config.RuleConfig) error {
 	return nil
 }
 
-func (s *SQLite) DeleteRule(id string) error {
-	if id == "" {
+func (s *SQLite) DeleteRule(id int64) error {
+	if id <= 0 {
 		return errors.New("id is required")
 	}
 	res, err := s.db.Exec(`DELETE FROM rules WHERE id = ?`, id)
@@ -250,6 +443,7 @@ func boolToInt(v bool) int {
 }
 
 func nullString(v string) sql.NullString {
+	v = strings.TrimSpace(v)
 	if v == "" {
 		return sql.NullString{}
 	}
@@ -261,4 +455,11 @@ func nullInt(v int) sql.NullInt64 {
 		return sql.NullInt64{}
 	}
 	return sql.NullInt64{Int64: int64(v), Valid: true}
+}
+
+func nullInt64(v int64) sql.NullInt64 {
+	if v == 0 {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: v, Valid: true}
 }

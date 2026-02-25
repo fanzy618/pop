@@ -4,18 +4,17 @@
 
 规则包含以下关键字段：
 
-- `id`：规则唯一标识。
+- `id`：规则唯一标识（数据库自增主键）。
 - `enabled`：是否启用。
-- `order`：匹配顺序（值越小优先级越高）。
 - `pattern`：域名模式。
 - `action`：`DIRECT` / `PROXY` / `BLOCK`。
-- `upstream_id`：当 action 为 `PROXY` 时必填。
-- `block_status`：当 action 为 `BLOCK` 时可选，默认 `404`。
+- `upstream_id`：当 action 为 `PROXY` 时必填（上游数据库主键）。
+- `block_status`：Web Console 固定为 `404`。
 
 ## 2. 匹配语义
 
 - 匹配输入是归一化后的 host。
-- 规则按 `order` 升序依次匹配。
+- 规则按创建时间倒序匹配（新建规则优先）。
 - 第一条命中规则立即生效（first match wins）。
 - 未命中任何规则时走默认动作（当前默认 `DIRECT`）。
 
@@ -63,4 +62,4 @@
 
 - `PROXY` 规则缺失 `upstream_id`：会导致请求失败。
 - `*.example.com` 误以为可匹配 `example.com`：实际不会匹配。
-- 顺序不当：上层宽规则提前命中，导致后续细规则失效。
+- 顺序不当：新建规则优先命中，可能导致旧规则不再生效。

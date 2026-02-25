@@ -29,7 +29,8 @@ func TestConfigPersistsAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.CreateRule(config.RuleConfig{ID: "block-ads", Enabled: true, Pattern: "*ads*", Action: rules.ActionBlock, BlockStatus: http.StatusGone}); err != nil {
+	rule := config.RuleConfig{Enabled: true, Pattern: "*ads*", Action: rules.ActionBlock, BlockStatus: http.StatusGone}
+	if err := db.CreateRule(&rule); err != nil {
 		t.Fatalf("create rule: %v", err)
 	}
 	if err := db.Close(); err != nil {
@@ -75,8 +76,8 @@ func TestConfigPersistsAcrossRestart(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode != http.StatusGone {
-			t.Fatalf("status=%d, want=%d", resp.StatusCode, http.StatusGone)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("status=%d, want=%d", resp.StatusCode, http.StatusNotFound)
 		}
 	}
 
