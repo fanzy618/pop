@@ -1,0 +1,149 @@
+:root {
+  --bg: #f3f4ef;
+  --card: #ffffff;
+  --text: #1f2a2d;
+  --subtle: #5c6b70;
+  --line: #d9ddd2;
+  --accent: #1f6f66;
+  --warn: #9c2f1f;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+  background: linear-gradient(160deg, #f7f8f2 0%, #ecefe4 100%);
+  color: var(--text);
+}
+
+.topbar {
+  padding: 24px 20px 12px;
+}
+
+.topbar h1 {
+  margin: 0;
+  font-size: 24px;
+}
+
+.topbar p {
+  margin: 6px 0 0;
+  color: var(--subtle);
+}
+
+.layout {
+  display: grid;
+  gap: 14px;
+  padding: 0 20px 24px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px;
+}
+
+.card h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+
+.stats-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+}
+
+.stats-grid div {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  background: #fbfcf9;
+}
+
+.stats-grid span {
+  display: block;
+  font-size: 12px;
+  color: var(--subtle);
+}
+
+.stats-grid strong {
+  font-size: 18px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--line);
+  padding: 8px;
+  text-align: left;
+  white-space: nowrap;
+}
+
+th {
+  color: var(--subtle);
+}
+
+.form-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+input,
+select,
+button {
+  font: inherit;
+  padding: 8px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+button {
+  background: var(--accent);
+  color: #fff;
+  border: 0;
+  cursor: pointer;
+}
+
+button.secondary {
+  background: #567177;
+}
+
+button.danger {
+  background: var(--warn);
+}
+
+.msg {
+  margin: 0;
+  min-height: 20px;
+  color: var(--subtle);
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    padding-top: 16px;
+  }
+
+  .topbar h1 {
+    font-size: 20px;
+  }
+
+  .layout {
+    padding: 0 12px 16px;
+  }
+}

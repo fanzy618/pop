@@ -33,6 +33,35 @@ func TestConsoleAuthRequired(t *testing.T) {
 	}
 }
 
+func TestConsoleIndexAndAssets(t *testing.T) {
+	t.Parallel()
+
+	consoleURL, _, _, authClient := setupConsoleAndProxy(t)
+
+	indexResp, err := authClient.Get(consoleURL + "/")
+	if err != nil {
+		t.Fatalf("GET index: %v", err)
+	}
+	defer indexResp.Body.Close()
+
+	if indexResp.StatusCode != http.StatusOK {
+		t.Fatalf("index status=%d, want=%d", indexResp.StatusCode, http.StatusOK)
+	}
+	if ct := indexResp.Header.Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("index content-type=%q, want contains text/html", ct)
+	}
+
+	assetResp, err := authClient.Get(consoleURL + "/assets/app.js")
+	if err != nil {
+		t.Fatalf("GET app.js: %v", err)
+	}
+	defer assetResp.Body.Close()
+
+	if assetResp.StatusCode != http.StatusOK {
+		t.Fatalf("asset status=%d, want=%d", assetResp.StatusCode, http.StatusOK)
+	}
+}
+
 func TestConsoleRulesCRUDAndReorder(t *testing.T) {
 	t.Parallel()
 

@@ -1,9 +1,11 @@
 package console
 
 import (
+	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,6 +16,9 @@ import (
 	"github.com/fanzy618/pop/internal/telemetry"
 	"github.com/fanzy618/pop/internal/upstream"
 )
+
+//go:embed assets/*
+var staticAssets embed.FS
 
 type Server struct {
 	configPath string
@@ -52,8 +57,13 @@ func NewServer(cfg *config.Config, configPath string, proxyServer *proxy.Server,
 	if err := s.applyConfigLocked(cloneConfig(cfg)); err != nil {
 		return nil, err
 	}
+	assetsFS, err := fs.Sub(staticAssets, "assets")
+	if err != nil {
+		return nil, fmt.Errorf("load static assets: %w", err)
+	}
 
 	mux := http.NewServeMux()
+	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assetsFS))))
 	mux.HandleFunc("/", s.handleIndex)
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/upstreams", s.handleUpstreams)
@@ -90,8 +100,20 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	_, _ = w.Write([]byte("POP console API"))
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+
+	data, err := staticAssets.ReadFile("assets/index.html")
+	if err != nil {
+		http.Error(w, "console page is unavailable", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
