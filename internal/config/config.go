@@ -1,0 +1,192 @@
+package config
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+
+	"github.com/fanzy618/pop/internal/rules"
+	"github.com/fanzy618/pop/internal/upstream"
+)
+
+type Config struct {
+	ProxyListen   string           `json:"proxy_listen"`
+	ConsoleListen string           `json:"console_listen"`
+	DefaultAction rules.Action     `json:"default_action"`
+	Upstreams     []UpstreamConfig `json:"upstreams"`
+	Rules         []RuleConfig     `json:"rules"`
+}
+
+type UpstreamConfig struct {
+	ID      string `json:"id"`
+	URL     string `json:"url"`
+	Enabled bool   `json:"enabled"`
+}
+
+type RuleConfig struct {
+	ID          string       `json:"id"`
+	Enabled     bool         `json:"enabled"`
+	Order       int          `json:"order"`
+	Pattern     string       `json:"pattern"`
+	Action      rules.Action `json:"action"`
+	UpstreamID  string       `json:"upstream_id,omitempty"`
+	BlockStatus int          `json:"block_status,omitempty"`
+}
+
+func Default() *Config {
+	return &Config{
+		ProxyListen:   "127.0.0.1:8080",
+		ConsoleListen: "127.0.0.1:9090",
+		DefaultAction: rules.ActionDirect,
+		Upstreams:     []UpstreamConfig{},
+		Rules:         []RuleConfig{},
+	}
+}
+
+func Load(path string) (*Config, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return Default(), nil
+		}
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+
+	cfg := Default()
+	if err := json.Unmarshal(raw, cfg); err != nil {
+		return nil, fmt.Errorf("decode config: %w", err)
+	}
+
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+func Save(path string, cfg *Config) error {
+	if cfg == nil {
+		return errors.New("config cannot be nil")
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("ensure config dir: %w", err)
+	}
+
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode config: %w", err)
+	}
+
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+		return fmt.Errorf("write temp config: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("commit config atomically: %w", err)
+	}
+
+	return nil
+}
+
+func (c *Config) Validate() error {
+	if c == nil {
+		return errors.New("config cannot be nil")
+	}
+
+	if c.ProxyListen == "" {
+		return errors.New("proxy_listen cannot be empty")
+	}
+
+	if c.DefaultAction == "" {
+		c.DefaultAction = rules.ActionDirect
+	}
+
+	if c.DefaultAction != rules.ActionDirect && c.DefaultAction != rules.ActionProxy && c.DefaultAction != rules.ActionBlock {
+		return fmt.Errorf("unsupported default action: %q", c.DefaultAction)
+	}
+
+	upstreamIDs := make(map[string]struct{})
+	for _, up := range c.Upstreams {
+		if up.ID == "" {
+			return errors.New("upstream id cannot be empty")
+		}
+		if up.URL == "" {
+			return fmt.Errorf("upstream %s URL cannot be empty", up.ID)
+		}
+		if !strings.HasPrefix(strings.ToLower(up.URL), "http://") {
+			return fmt.Errorf("upstream %s must use http://", up.ID)
+		}
+		upstreamIDs[up.ID] = struct{}{}
+	}
+
+	for _, rule := range c.Rules {
+		if !rule.Enabled {
+			continue
+		}
+		if rule.Pattern == "" {
+			return fmt.Errorf("rule %s pattern cannot be empty", rule.ID)
+		}
+		switch rule.Action {
+		case rules.ActionDirect:
+		case rules.ActionBlock:
+			if rule.BlockStatus == 0 {
+				rule.BlockStatus = 404
+			}
+		case rules.ActionProxy:
+			if rule.UpstreamID == "" {
+				return fmt.Errorf("rule %s must set upstream_id for PROXY action", rule.ID)
+			}
+			if _, ok := upstreamIDs[rule.UpstreamID]; !ok {
+				return fmt.Errorf("rule %s references unknown upstream %s", rule.ID, rule.UpstreamID)
+			}
+		default:
+			return fmt.Errorf("rule %s has unsupported action %q", rule.ID, rule.Action)
+		}
+	}
+
+	return nil
+}
+
+func (c *Config) BuildMatcher() *rules.Matcher {
+	ordered := make([]RuleConfig, 0, len(c.Rules))
+	ordered = append(ordered, c.Rules...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return ordered[i].Order < ordered[j].Order
+	})
+
+	ruleSet := make([]rules.Rule, 0, len(ordered))
+	for _, r := range ordered {
+		ruleSet = append(ruleSet, rules.Rule{
+			ID:          r.ID,
+			Enabled:     r.Enabled,
+			Order:       r.Order,
+			Pattern:     r.Pattern,
+			Action:      r.Action,
+			UpstreamID:  r.UpstreamID,
+			BlockStatus: r.BlockStatus,
+		})
+	}
+
+	return rules.NewMatcher(ruleSet, rules.Decision{Action: c.DefaultAction})
+}
+
+func (c *Config) BuildUpstreamConfigs() []upstream.Config {
+	out := make([]upstream.Config, 0, len(c.Upstreams))
+	for _, up := range c.Upstreams {
+		out = append(out, upstream.Config{
+			ID:      up.ID,
+			URL:     up.URL,
+			Enabled: up.Enabled,
+		})
+	}
+	return out
+}

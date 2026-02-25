@@ -5,19 +5,33 @@ import (
 	"log"
 	"net/http"
 
+	"github.com/fanzy618/pop/internal/config"
 	"github.com/fanzy618/pop/internal/proxy"
+	"github.com/fanzy618/pop/internal/upstream"
 )
 
 func main() {
-	listen := flag.String("listen", "127.0.0.1:8080", "proxy listen address")
+	configPath := flag.String("config", "./pop.json", "config file path")
 	flag.Parse()
 
-	srv := &http.Server{
-		Addr:    *listen,
-		Handler: proxy.NewServer(),
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		log.Fatalf("load config failed: %v", err)
 	}
 
-	log.Printf("pop proxy listening on %s", *listen)
+	upstreams, err := upstream.NewManager(cfg.BuildUpstreamConfigs())
+	if err != nil {
+		log.Fatalf("build upstreams failed: %v", err)
+	}
+
+	handler := proxy.NewServerWithDeps(cfg.BuildMatcher(), upstreams)
+
+	srv := &http.Server{
+		Addr:    cfg.ProxyListen,
+		Handler: handler,
+	}
+
+	log.Printf("pop proxy listening on %s (config: %s)", cfg.ProxyListen, *configPath)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("proxy server stopped: %v", err)
 	}
