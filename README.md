@@ -1,74 +1,72 @@
 # Proxy of Proxy (POP)
 
-POP is a local HTTP proxy for personal use. It decides request handling by ordered domain rules:
-
-- `DIRECT`: connect directly
-- `PROXY`: forward through a configured upstream HTTP proxy
-- `BLOCK`: reject with fixed status code `404` in web console
-
-If no rule matches, POP uses `default_action` (default: `DIRECT`).
+POP is a local HTTP proxy with a web console for domain-based routing.
 
 ## Features
 
-- Local HTTP proxy endpoint (supports normal HTTP and `CONNECT` tunnels)
-- Ordered rule matching (`first match wins`)
-- Runtime telemetry: live activities, in-flight requests, counters, bandwidth
-- Web console API and pages (no authentication)
-- Rules and upstreams persisted in SQLite
-- Full backup/restore for SQLite data
+- HTTP proxy endpoint for normal HTTP and `CONNECT` traffic
+- Domain rules with actions:
+  - `DIRECT`
+  - `PROXY` (via selected upstream)
+  - `BLOCK` (web console behavior fixed to `404`)
+- Rules are matched by newest first (`created_at` desc)
+- Creating a rule with the same domain pattern overrides the existing rule and refreshes its `created_at`
+- Live telemetry: in-flight, totals, bandwidth, activities, SSE stream
+- Web console pages:
+  - Stats
+  - Activities (supports quick "add rule" from an activity row)
+  - Rules
+  - Upstreams
+  - Data management
+- SQLite persistence for rules/upstreams
+- Data management:
+  - Full backup/restore of SQLite data
+  - ABP text import (`Adblock Plus` syntax subset) with unified route target (`DIRECT` or selected `UPSTREAM`)
 
 ## Requirements
 
-- Go `1.25.5` (per `go.mod`)
+- Go `1.25.5` (see `go.mod`)
 
-## Runtime Config
+## Run
 
-POP no longer uses JSON config files. Runtime config comes from:
+```bash
+go run ./cmd/pop
+```
 
-1. CLI arguments (highest priority)
+Default listen addresses:
+
+- Proxy: `0.0.0.0:5128`
+- Console: `127.0.0.1:5080`
+
+## Configuration
+
+Configuration sources and priority:
+
+1. CLI flags
 2. Environment variables
 3. Built-in defaults
 
-If a key appears in multiple places, resolution order is: `CLI > ENV > default`.
+Priority is always: `CLI > ENV > default`.
 
-### Defaults
-
-- `proxy_listen`: `0.0.0.0:5128`
-- `console_listen`: `127.0.0.1:5080`
-- `default_action`: `DIRECT`
-- `sqlite_path`: `./pop.sqlite`
-
-### Environment variables
+Environment variables:
 
 - `POP_PROXY_LISTEN`
 - `POP_CONSOLE_LISTEN`
 - `POP_DEFAULT_ACTION` (`DIRECT` / `PROXY` / `BLOCK`)
 - `POP_SQLITE_PATH`
 
-### CLI (GNU style)
-
-Long and short flags are both supported:
+CLI flags (GNU style):
 
 - `--proxy-listen`, `-p`
 - `--console-listen`, `-c`
 - `--default-action`, `-a`
 - `--sqlite-path`, `-s`
 
-## Quick Start
-
-Run with defaults:
+Example:
 
 ```bash
-go run ./cmd/pop
+POP_PROXY_LISTEN=127.0.0.1:18080 go run ./cmd/pop --console-listen 127.0.0.1:19090
 ```
-
-Run with overrides:
-
-```bash
-POP_PROXY_LISTEN=127.0.0.1:8080 go run ./cmd/pop --console-listen 127.0.0.1:9090
-```
-
-Configure your OS/browser HTTP proxy to POP's `proxy_listen`.
 
 ## Console API
 
@@ -82,17 +80,20 @@ Configure your OS/browser HTTP proxy to POP's `proxy_listen`.
 - `POST /api/rules`
 - `PUT /api/rules/:id`
 - `DELETE /api/rules/:id`
-- `POST /api/rules/reorder`
+- `POST /api/rules/reorder` (currently returns `reorder_disabled`)
 - `GET /api/data/backup`
 - `POST /api/data/restore`
 - `POST /api/data/import-abp`
 - `GET /api/stats`
 - `GET /api/activities?limit=100`
-- `GET /api/activities/stream` (SSE)
+- `GET /api/activities/stream`
 
-Backup payload includes `data_format_version`; restore currently requires matching version.
+Notes:
 
-## Verify Locally
+- Backup payload includes `data_format_version`; restore requires compatible version.
+- ABP import skips comments, exception rules (`@@`), and element hiding rules.
+
+## Verify
 
 ```bash
 go test ./...
