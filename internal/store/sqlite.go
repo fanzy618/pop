@@ -402,29 +402,79 @@ func (s *SQLite) CreateRule(item *config.RuleConfig) error {
 	if item == nil {
 		return errors.New("rule is required")
 	}
+	item.Pattern = normalizeRulePattern(item.Pattern)
 	if item.Pattern == "" {
 		return errors.New("pattern is required")
 	}
 	if item.Action == "BLOCK" {
 		item.BlockStatus = 404
 	}
-	res, err := s.db.Exec(
-		`INSERT INTO rules(enabled, pattern, action, upstream_ref, block_status, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+
+	now := time.Now().UnixMilli()
+	rows, err := s.db.Query(`SELECT id FROM rules WHERE lower(trim(pattern, '.')) = ? ORDER BY created_at DESC, id DESC`, item.Pattern)
+	if err != nil {
+		return fmt.Errorf("query existing rule by pattern: %w", err)
+	}
+	defer rows.Close()
+
+	matchedIDs := make([]int64, 0, 1)
+	for rows.Next() {
+		var id int64
+		if scanErr := rows.Scan(&id); scanErr != nil {
+			return fmt.Errorf("scan existing rule id: %w", scanErr)
+		}
+		matchedIDs = append(matchedIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterate existing rule id: %w", err)
+	}
+
+	if len(matchedIDs) == 0 {
+		res, execErr := s.db.Exec(
+			`INSERT INTO rules(enabled, pattern, action, upstream_ref, block_status, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+			boolToInt(item.Enabled),
+			item.Pattern,
+			item.Action,
+			nullInt64(item.UpstreamID),
+			nullInt(item.BlockStatus),
+			now,
+		)
+		if execErr != nil {
+			return fmt.Errorf("insert rule: %w", execErr)
+		}
+		insertID, idErr := res.LastInsertId()
+		if idErr != nil {
+			return fmt.Errorf("read inserted rule id: %w", idErr)
+		}
+		item.ID = insertID
+		item.CreatedAt = now
+		return nil
+	}
+
+	keepID := matchedIDs[0]
+	if _, err := s.db.Exec(
+		`UPDATE rules SET enabled=?, pattern=?, action=?, upstream_ref=?, block_status=?, created_at=? WHERE id=?`,
 		boolToInt(item.Enabled),
 		item.Pattern,
 		item.Action,
 		nullInt64(item.UpstreamID),
 		nullInt(item.BlockStatus),
-		time.Now().UnixMilli(),
-	)
-	if err != nil {
-		return fmt.Errorf("insert rule: %w", err)
+		now,
+		keepID,
+	); err != nil {
+		return fmt.Errorf("update existing rule by pattern: %w", err)
 	}
-	insertID, err := res.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("read inserted rule id: %w", err)
+
+	if len(matchedIDs) > 1 {
+		for _, duplicateID := range matchedIDs[1:] {
+			if _, err := s.db.Exec(`DELETE FROM rules WHERE id=?`, duplicateID); err != nil {
+				return fmt.Errorf("cleanup duplicate rule %d: %w", duplicateID, err)
+			}
+		}
 	}
-	item.ID = insertID
+
+	item.ID = keepID
+	item.CreatedAt = now
 	return nil
 }
 
@@ -605,4 +655,10 @@ func nullInt64(v int64) sql.NullInt64 {
 		return sql.NullInt64{}
 	}
 	return sql.NullInt64{Int64: v, Valid: true}
+}
+
+func normalizeRulePattern(v string) string {
+	v = strings.TrimSpace(strings.ToLower(v))
+	v = strings.TrimSuffix(v, ".")
+	return v
 }

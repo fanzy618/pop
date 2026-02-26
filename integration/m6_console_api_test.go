@@ -461,6 +461,35 @@ func TestConsoleImportABP(t *testing.T) {
 	}
 }
 
+func TestConsoleCreateRuleOverridesSamePattern(t *testing.T) {
+	t.Parallel()
+
+	consoleURL, _, _, client := setupConsoleAndProxy(t)
+
+	postJSON(t, client, consoleURL+"/api/rules", map[string]any{"enabled": true, "pattern": "Example.com", "action": "DIRECT"}, http.StatusCreated)
+	postJSON(t, client, consoleURL+"/api/rules", map[string]any{"enabled": true, "pattern": "example.com.", "action": "BLOCK", "block_status": 410}, http.StatusCreated)
+
+	resp, err := client.Get(consoleURL + "/api/rules")
+	if err != nil {
+		t.Fatalf("GET rules: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var rulesList []config.RuleConfig
+	if err := json.NewDecoder(resp.Body).Decode(&rulesList); err != nil {
+		t.Fatalf("decode rules: %v", err)
+	}
+	if len(rulesList) != 1 {
+		t.Fatalf("rules length=%d, want=1", len(rulesList))
+	}
+	if rulesList[0].Action != "BLOCK" {
+		t.Fatalf("action=%s, want=BLOCK", rulesList[0].Action)
+	}
+	if rulesList[0].BlockStatus != 404 {
+		t.Fatalf("block_status=%d, want=404", rulesList[0].BlockStatus)
+	}
+}
+
 func setupConsoleAndProxy(t *testing.T) (consoleURL string, proxyURL string, dbPath string, client *http.Client) {
 	t.Helper()
 

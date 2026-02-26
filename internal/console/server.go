@@ -460,29 +460,21 @@ func (s *Server) handleDataImportABP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	existing, err := s.db.ListRules()
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	existingSet := make(map[string]struct{}, len(existing))
-	for _, rule := range existing {
-		existingSet[ruleUniqKey(rule.Pattern, rule.Action, rule.UpstreamID)] = struct{}{}
-	}
-
 	created := 0
 	skippedExisting := 0
+	batchSeen := make(map[string]struct{})
 	for _, domain := range domains {
 		patterns := []string{domain}
 		if strings.Contains(domain, ".") {
 			patterns = append(patterns, "*."+domain)
 		}
 		for _, pattern := range patterns {
-			key := ruleUniqKey(pattern, action, upstreamID)
-			if _, ok := existingSet[key]; ok {
+			normPattern := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(pattern)), ".")
+			if _, ok := batchSeen[normPattern]; ok {
 				skippedExisting++
 				continue
 			}
+			batchSeen[normPattern] = struct{}{}
 			rule := config.RuleConfig{
 				Enabled:    enabled,
 				Pattern:    pattern,
@@ -497,7 +489,6 @@ func (s *Server) handleDataImportABP(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
-			existingSet[key] = struct{}{}
 			created++
 		}
 	}
@@ -737,10 +728,6 @@ func parseABPLineHost(line string) (string, bool) {
 		return "", false
 	}
 	return line, true
-}
-
-func ruleUniqKey(pattern string, action rules.Action, upstreamID int64) string {
-	return strings.TrimSpace(strings.ToLower(pattern)) + "|" + string(action) + "|" + strconv.FormatInt(upstreamID, 10)
 }
 
 func cloneConfig(in *config.Config) *config.Config {

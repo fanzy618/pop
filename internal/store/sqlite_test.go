@@ -172,3 +172,41 @@ func TestRestoreBackupRejectsUnsupportedVersion(t *testing.T) {
 		t.Fatalf("expected restore to fail for unsupported version")
 	}
 }
+
+func TestCreateRuleOverridesSamePatternAndRefreshesCreatedAt(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "pop.sqlite")
+	db, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	first := config.RuleConfig{Enabled: true, Pattern: "Example.COM", Action: rules.ActionDirect}
+	if err := db.CreateRule(&first); err != nil {
+		t.Fatalf("create first rule: %v", err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	second := config.RuleConfig{Enabled: true, Pattern: "example.com.", Action: rules.ActionBlock, BlockStatus: 410}
+	if err := db.CreateRule(&second); err != nil {
+		t.Fatalf("create second rule: %v", err)
+	}
+
+	rulesList, err := db.ListRules()
+	if err != nil {
+		t.Fatalf("list rules: %v", err)
+	}
+	if len(rulesList) != 1 {
+		t.Fatalf("rules length=%d, want=1", len(rulesList))
+	}
+	if rulesList[0].Action != rules.ActionBlock {
+		t.Fatalf("action=%s, want=%s", rulesList[0].Action, rules.ActionBlock)
+	}
+	if rulesList[0].BlockStatus != 404 {
+		t.Fatalf("block_status=%d, want=404", rulesList[0].BlockStatus)
+	}
+	if rulesList[0].CreatedAt <= first.CreatedAt {
+		t.Fatalf("created_at not refreshed: first=%d current=%d", first.CreatedAt, rulesList[0].CreatedAt)
+	}
+}
