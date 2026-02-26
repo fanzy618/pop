@@ -37,6 +37,19 @@
       </div>
     </section>
 
+    <section class="card">
+      <h2>导入 ABP 规则</h2>
+      <p class="hint">上传 Adblock Plus 规则文本，批量提取域名并按统一行为创建规则（仅导入可解析域名，忽略注释/例外/元素隐藏规则）。</p>
+      <div class="form-inline">
+        <input id="abp-file" type="file" accept="text/plain,.txt,.abp">
+        <select id="abp-route-target" name="route_target" required>
+          <option value="DIRECT">直连 (DIRECT)</option>
+        </select>
+        <label><input id="abp-enabled" type="checkbox" checked>启用</label>
+        <button id="abp-import" type="button">导入 ABP</button>
+      </div>
+    </section>
+
     <p id="msg" class="msg"></p>
   </main>
 

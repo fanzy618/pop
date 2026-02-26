@@ -85,6 +85,7 @@ Configure your OS/browser HTTP proxy to POP's `proxy_listen`.
 - `POST /api/rules/reorder`
 - `GET /api/data/backup`
 - `POST /api/data/restore`
+- `POST /api/data/import-abp`
 - `GET /api/stats`
 - `GET /api/activities?limit=100`
 - `GET /api/activities/stream` (SSE)

@@ -2,12 +2,15 @@ package integration
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -361,6 +364,100 @@ func TestConsoleDataPageServed(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d want=%d", resp.StatusCode, http.StatusOK)
+	}
+}
+
+func TestConsoleImportABP(t *testing.T) {
+	t.Parallel()
+
+	consoleURL, _, _, client := setupConsoleAndProxy(t)
+
+	postJSON(t, client, consoleURL+"/api/upstreams", map[string]any{"name": "abp-up", "url": "http://127.0.0.1:18080", "enabled": true}, http.StatusCreated)
+
+	upResp, err := client.Get(consoleURL + "/api/upstreams")
+	if err != nil {
+		t.Fatalf("GET upstreams: %v", err)
+	}
+	defer upResp.Body.Close()
+	var upstreams []config.UpstreamConfig
+	if err := json.NewDecoder(upResp.Body).Decode(&upstreams); err != nil {
+		t.Fatalf("decode upstreams: %v", err)
+	}
+	if len(upstreams) != 1 {
+		t.Fatalf("upstreams length=%d, want=1", len(upstreams))
+	}
+
+	abpText := strings.Join([]string{
+		"! comment",
+		"||ads.example.com^",
+		"@@||allow.example.com^",
+		"example.org",
+		"||sub.example.net^$third-party",
+		"||ads.example.com^",
+	}, "\n")
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "rules.txt")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write([]byte(abpText)); err != nil {
+		t.Fatalf("write form file: %v", err)
+	}
+	_ = writer.WriteField("route_target", "UPSTREAM:"+strings.TrimSpace(strconv.FormatInt(upstreams[0].ID, 10)))
+	_ = writer.WriteField("enabled", "true")
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, consoleURL+"/api/data/import-abp", &body)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("import abp: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status=%d want=%d body=%s", resp.StatusCode, http.StatusOK, strings.TrimSpace(string(raw)))
+	}
+
+	rulesResp, err := client.Get(consoleURL + "/api/rules")
+	if err != nil {
+		t.Fatalf("GET rules: %v", err)
+	}
+	defer rulesResp.Body.Close()
+	var rulesList []config.RuleConfig
+	if err := json.NewDecoder(rulesResp.Body).Decode(&rulesList); err != nil {
+		t.Fatalf("decode rules: %v", err)
+	}
+	if len(rulesList) != 6 {
+		t.Fatalf("rules length=%d, want=6", len(rulesList))
+	}
+	contains := func(pattern string) bool {
+		for _, r := range rulesList {
+			if r.Pattern == pattern {
+				return true
+			}
+		}
+		return false
+	}
+	if !contains("ads.example.com") || !contains("*.ads.example.com") {
+		t.Fatalf("expected ads.example.com patterns in imported rules")
+	}
+	if !contains("example.org") || !contains("*.example.org") {
+		t.Fatalf("expected example.org patterns in imported rules")
+	}
+	if !contains("sub.example.net") || !contains("*.sub.example.net") {
+		t.Fatalf("expected sub.example.net patterns in imported rules")
+	}
+	if contains("allow.example.com") || contains("*.allow.example.com") {
+		t.Fatalf("exception rule should be skipped")
 	}
 }
 

@@ -41,6 +41,7 @@ go run ./cmd/pop
 
 - 导出备份：`GET /api/data/backup`
 - 恢复备份：`POST /api/data/restore`
+- 导入 ABP：`POST /api/data/import-abp`（multipart: file + route_target）
 - 恢复策略为全量替换（会清空当前 rules/upstreams 并按备份重建）
 - 备份体包含 `data_format_version`，版本不兼容时会拒绝恢复
 

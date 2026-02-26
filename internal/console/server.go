@@ -1,20 +1,26 @@
 package console
 
 import (
+	"bufio"
 	"database/sql"
 	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
+	"net"
 	"net/http"
 	"net/url"
+	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/fanzy618/pop/internal/config"
 	"github.com/fanzy618/pop/internal/proxy"
+	"github.com/fanzy618/pop/internal/rules"
 	"github.com/fanzy618/pop/internal/store"
 	"github.com/fanzy618/pop/internal/telemetry"
 	"github.com/fanzy618/pop/internal/upstream"
@@ -77,6 +83,7 @@ func NewServer(cfg *config.Config, db *store.SQLite, proxyServer *proxy.Server, 
 	mux.HandleFunc("/api/rules/reorder", s.handleRuleReorder)
 	mux.HandleFunc("/api/data/backup", s.handleDataBackup)
 	mux.HandleFunc("/api/data/restore", s.handleDataRestore)
+	mux.HandleFunc("/api/data/import-abp", s.handleDataImportABP)
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/activities", s.handleActivities)
 	mux.HandleFunc("/api/activities/stream", s.handleActivitiesStream)
@@ -410,6 +417,106 @@ func (s *Server) handleDataRestore(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "upstreams": len(payload.Upstreams), "rules": len(payload.Rules)})
 }
 
+func (s *Server) handleDataImportABP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		http.Error(w, "invalid multipart form", http.StatusBadRequest)
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		http.Error(w, "file is required", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	routeTarget := strings.TrimSpace(r.FormValue("route_target"))
+	action, upstreamID, err := parseImportRouteTarget(routeTarget)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	enabled := parseBoolForm(r.FormValue("enabled"), true)
+
+	raw, err := io.ReadAll(file)
+	if err != nil {
+		http.Error(w, "read file failed", http.StatusBadRequest)
+		return
+	}
+
+	domains, totalLines, skippedUnsupported := parseABPDomains(string(raw))
+	if len(domains) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok":                  true,
+			"total_lines":         totalLines,
+			"parsed_domains":      0,
+			"created_rules":       0,
+			"skipped_existing":    0,
+			"skipped_unsupported": skippedUnsupported,
+		})
+		return
+	}
+
+	existing, err := s.db.ListRules()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	existingSet := make(map[string]struct{}, len(existing))
+	for _, rule := range existing {
+		existingSet[ruleUniqKey(rule.Pattern, rule.Action, rule.UpstreamID)] = struct{}{}
+	}
+
+	created := 0
+	skippedExisting := 0
+	for _, domain := range domains {
+		patterns := []string{domain}
+		if strings.Contains(domain, ".") {
+			patterns = append(patterns, "*."+domain)
+		}
+		for _, pattern := range patterns {
+			key := ruleUniqKey(pattern, action, upstreamID)
+			if _, ok := existingSet[key]; ok {
+				skippedExisting++
+				continue
+			}
+			rule := config.RuleConfig{
+				Enabled:    enabled,
+				Pattern:    pattern,
+				Action:     action,
+				UpstreamID: upstreamID,
+			}
+			if err := s.db.CreateRule(&rule); err != nil {
+				if isForeignKeyConstraint(err) {
+					http.Error(w, "unknown upstream_id", http.StatusBadRequest)
+					return
+				}
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			existingSet[key] = struct{}{}
+			created++
+		}
+	}
+
+	if err := s.rebuildRuntime(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":                  true,
+		"total_lines":         totalLines,
+		"parsed_domains":      len(domains),
+		"created_rules":       created,
+		"skipped_existing":    skippedExisting,
+		"skipped_unsupported": skippedUnsupported,
+	})
+}
+
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -536,6 +643,104 @@ func isForeignKeyConstraint(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "foreign key")
+}
+
+func parseImportRouteTarget(raw string) (action rules.Action, upstreamID int64, err error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "DIRECT" {
+		return rules.ActionDirect, 0, nil
+	}
+	if strings.HasPrefix(raw, "UPSTREAM:") {
+		idRaw := strings.TrimSpace(strings.TrimPrefix(raw, "UPSTREAM:"))
+		id, convErr := strconv.ParseInt(idRaw, 10, 64)
+		if convErr != nil || id <= 0 {
+			return "", 0, errors.New("invalid upstream route_target")
+		}
+		return rules.ActionProxy, id, nil
+	}
+	return "", 0, errors.New("unsupported route_target")
+}
+
+func parseBoolForm(raw string, defaultValue bool) bool {
+	raw = strings.TrimSpace(strings.ToLower(raw))
+	if raw == "" {
+		return defaultValue
+	}
+	return raw == "1" || raw == "true" || raw == "yes" || raw == "on"
+}
+
+var abpDomainPattern = regexp.MustCompile(`^[a-z0-9.-]+$`)
+
+func parseABPDomains(content string) (domains []string, totalLines int, skippedUnsupported int) {
+	seen := make(map[string]struct{})
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		totalLines++
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "!") || strings.HasPrefix(line, "[") {
+			continue
+		}
+		if strings.HasPrefix(line, "@@") || strings.Contains(line, "##") || strings.Contains(line, "#@#") || strings.Contains(line, "#?#") {
+			skippedUnsupported++
+			continue
+		}
+		if strings.HasPrefix(line, "/") && strings.HasSuffix(line, "/") {
+			skippedUnsupported++
+			continue
+		}
+
+		host, ok := parseABPLineHost(line)
+		if !ok {
+			skippedUnsupported++
+			continue
+		}
+		if _, exists := seen[host]; exists {
+			continue
+		}
+		seen[host] = struct{}{}
+		domains = append(domains, host)
+	}
+	sort.Strings(domains)
+	return domains, totalLines, skippedUnsupported
+}
+
+func parseABPLineHost(line string) (string, bool) {
+	line = strings.TrimSpace(line)
+	line = strings.TrimPrefix(line, "||")
+	line = strings.TrimPrefix(line, "|")
+	line = strings.TrimPrefix(line, "http://")
+	line = strings.TrimPrefix(line, "https://")
+	line = strings.TrimPrefix(line, "*.")
+
+	if idx := strings.IndexAny(line, "^/$?|*"); idx >= 0 {
+		line = line[:idx]
+	}
+	line = strings.TrimSpace(strings.ToLower(strings.Trim(line, ".")))
+	if line == "" {
+		return "", false
+	}
+	if strings.Contains(line, ":") {
+		hostOnly, _, err := net.SplitHostPort(line)
+		if err == nil {
+			line = hostOnly
+		} else if strings.Count(line, ":") == 1 {
+			parts := strings.Split(line, ":")
+			if len(parts) == 2 && parts[1] != "" {
+				line = parts[0]
+			}
+		}
+	}
+	if !abpDomainPattern.MatchString(line) || !strings.Contains(line, ".") {
+		return "", false
+	}
+	if strings.HasPrefix(line, "-") || strings.HasSuffix(line, "-") || strings.Contains(line, "..") {
+		return "", false
+	}
+	return line, true
+}
+
+func ruleUniqKey(pattern string, action rules.Action, upstreamID int64) string {
+	return strings.TrimSpace(strings.ToLower(pattern)) + "|" + string(action) + "|" + strconv.FormatInt(upstreamID, 10)
 }
 
 func cloneConfig(in *config.Config) *config.Config {

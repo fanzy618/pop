@@ -553,6 +553,13 @@ async function init() {
       const backupBtn = document.getElementById("backup-download");
       const restoreBtn = document.getElementById("restore-submit");
       const restoreFile = document.getElementById("restore-file");
+      const abpFile = document.getElementById("abp-file");
+      const abpRouteTarget = document.getElementById("abp-route-target");
+      const abpEnabled = document.getElementById("abp-enabled");
+      const abpImportBtn = document.getElementById("abp-import");
+
+      await loadUpstreams();
+      renderRouteOptions(abpRouteTarget, "DIRECT", { includeBlock: false });
 
       if (backupBtn) {
         backupBtn.addEventListener("click", async () => {
@@ -592,6 +599,34 @@ async function init() {
             showMsg("恢复成功，规则与上游已热更新");
           } catch (err) {
             showMsg(`恢复失败: ${err.message}`, true);
+          }
+        });
+      }
+
+      if (abpImportBtn && abpFile && abpRouteTarget && abpEnabled) {
+        abpImportBtn.addEventListener("click", async () => {
+          try {
+            const file = abpFile.files && abpFile.files[0];
+            if (!file) {
+              throw new Error("请先选择 ABP 文件");
+            }
+            const form = new FormData();
+            form.append("file", file);
+            form.append("route_target", String(abpRouteTarget.value || "DIRECT"));
+            form.append("enabled", abpEnabled.checked ? "true" : "false");
+
+            const resp = await fetch("/api/data/import-abp", {
+              method: "POST",
+              body: form,
+            });
+            if (!resp.ok) {
+              const body = await resp.text();
+              throw new Error(body || `导入失败: ${resp.status}`);
+            }
+            const result = await resp.json();
+            showMsg(`ABP 导入完成: 解析域名 ${result.parsed_domains}，创建规则 ${result.created_rules}，跳过已存在 ${result.skipped_existing}，跳过不支持 ${result.skipped_unsupported}`);
+          } catch (err) {
+            showMsg(`ABP 导入失败: ${err.message}`, true);
           }
         });
       }
