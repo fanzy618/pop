@@ -22,7 +22,7 @@
    - rules: “规则管理”
    - upstreams: “上游管理”
 4) 通过 Bash 发送一条代理流量：
-   - curl -x http://127.0.0.1:5000 http://example.com -I
+   - curl -x http://127.0.0.1:5128 http://example.com -I
    - 回到 stats 页面确认“总请求”增加
    - 回到 activities 页面确认出现 example.com 的活动记录
 5) 在 rules 页面执行一次真实 CRUD：
@@ -48,4 +48,4 @@
 
 - 该脚本是“可执行提示词”，用于驱动 OpenCode + Chrome MCP 自动完成页面级冒烟验证。
 - 无需认证即可访问 web console。
-- 如本机已有 POP 占用 `5000/5080`，请先停止旧进程后再执行。
+- 如本机已有 POP 占用 `5128/5080`，请先停止旧进程后再执行。

@@ -32,7 +32,7 @@ If a key appears in multiple places, resolution order is: `CLI > ENV > default`.
 
 ### Defaults
 
-- `proxy_listen`: `0.0.0.0:5000`
+- `proxy_listen`: `0.0.0.0:5128`
 - `console_listen`: `127.0.0.1:5080`
 - `default_action`: `DIRECT`
 - `sqlite_path`: `./pop.sqlite`
@@ -93,7 +93,7 @@ go test ./...
 ```
 
 ```bash
-curl -x http://127.0.0.1:5000 http://example.com -I
+curl -x http://127.0.0.1:5128 http://example.com -I
 ```
 
 ```bash

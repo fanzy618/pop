@@ -37,7 +37,7 @@ type RuleConfig struct {
 
 func Default() *Config {
 	return &Config{
-		ProxyListen:   "0.0.0.0:5000",
+		ProxyListen:   "0.0.0.0:5128",
 		ConsoleListen: "127.0.0.1:5080",
 		SQLitePath:    "./pop.sqlite",
 		DefaultAction: rules.ActionDirect,

@@ -10,7 +10,7 @@ func TestDefaultValues(t *testing.T) {
 	t.Parallel()
 
 	cfg := Default()
-	if cfg.ProxyListen != "0.0.0.0:5000" {
+	if cfg.ProxyListen != "0.0.0.0:5128" {
 		t.Fatalf("proxy_listen=%q", cfg.ProxyListen)
 	}
 	if cfg.ConsoleListen != "127.0.0.1:5080" {
