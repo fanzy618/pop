@@ -22,6 +22,15 @@
   <main class="layout">
     <section class="card">
       <h2>实时活动</h2>
+      <p class="hint">点击某条记录的“加入规则”，可快速把目标加入规则并设置直连或上游。</p>
+      <form id="activity-rule-form" class="form-inline hidden">
+        <input id="activity-rule-pattern" name="pattern" placeholder="域名模式" required>
+        <select id="activity-route-target" name="route_target" required>
+          <option value="DIRECT">直连 (DIRECT)</option>
+        </select>
+        <button type="submit">加入规则</button>
+        <button id="activity-rule-cancel" type="button" class="secondary">取消</button>
+      </form>
       <div class="table-wrap">
         <table>
           <thead>
@@ -33,6 +42,7 @@
               <th>动作</th>
               <th>状态</th>
               <th>耗时(ms)</th>
+              <th>操作</th>
             </tr>
           </thead>
           <tbody id="activity-body"></tbody>

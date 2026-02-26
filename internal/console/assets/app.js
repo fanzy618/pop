@@ -65,15 +65,19 @@ function fmtDateTime(ts) {
 
 function appendActivity(ev) {
   if (!activityBody) return;
+  const host = (ev.host || "").trim();
   const tr = document.createElement("tr");
   tr.innerHTML = `
     <td>${fmtTime(ev.time)}</td>
     <td>${ev.client || "-"}</td>
     <td>${ev.method || "-"}</td>
-    <td>${ev.host || "-"}</td>
+    <td>${host || "-"}</td>
     <td>${ev.action || "-"}</td>
     <td>${ev.status ?? "-"}</td>
     <td>${ev.duration_ms ?? "-"}</td>
+    <td>
+      <button class="secondary" data-act-op="add-rule" data-host="${host}">加入规则</button>
+    </td>
   `;
   activityBody.prepend(tr);
   while (activityBody.children.length > 200) {
@@ -106,14 +110,15 @@ function ruleRouteValue(rule) {
   return "DIRECT";
 }
 
-function renderRouteOptions(selectEl, selectedValue = "DIRECT") {
+function renderRouteOptions(selectEl, selectedValue = "DIRECT", opts = {}) {
   if (!selectEl) return;
+  const includeBlock = opts.includeBlock !== false;
   selectEl.innerHTML = "";
 
-  const base = [
-    { value: "DIRECT", text: "直连 (DIRECT)" },
-    { value: "BLOCK", text: "阻断 (BLOCK 404)" },
-  ];
+  const base = [{ value: "DIRECT", text: "直连 (DIRECT)" }];
+  if (includeBlock) {
+    base.push({ value: "BLOCK", text: "阻断 (BLOCK 404)" });
+  }
   base.forEach((item) => {
     const opt = document.createElement("option");
     opt.value = item.value;
@@ -158,12 +163,77 @@ function parseRouteTarget(value) {
   throw new Error("动作选择无效");
 }
 
+function bindActivityRuleEvents() {
+  const ruleForm = document.getElementById("activity-rule-form");
+  const patternInput = document.getElementById("activity-rule-pattern");
+  const routeTargetInput = document.getElementById("activity-route-target");
+  const cancelBtn = document.getElementById("activity-rule-cancel");
+  if (!ruleForm || !patternInput || !routeTargetInput || !cancelBtn || !activityBody) return;
+
+  function hideForm() {
+    ruleForm.classList.add("hidden");
+    patternInput.value = "";
+    renderRouteOptions(routeTargetInput, "DIRECT", { includeBlock: false });
+  }
+
+  function openFormWithHost(host) {
+    patternInput.value = host;
+    renderRouteOptions(routeTargetInput, "DIRECT", { includeBlock: false });
+    ruleForm.classList.remove("hidden");
+  }
+
+  cancelBtn.addEventListener("click", () => {
+    hideForm();
+    showMsg("已取消添加规则");
+  });
+
+  ruleForm.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const pattern = String(patternInput.value || "").trim();
+    const target = String(routeTargetInput.value || "DIRECT");
+    if (!pattern) {
+      showMsg("规则模式不能为空", true);
+      return;
+    }
+
+    const payload = {
+      enabled: true,
+      pattern,
+      ...parseRouteTarget(target),
+    };
+
+    try {
+      const created = await api("/api/rules", { method: "POST", body: JSON.stringify(payload) });
+      const newID = created && created.id ? String(created.id) : "";
+      const targetURL = newID ? `/rules?highlight_rule_id=${encodeURIComponent(newID)}` : "/rules";
+      window.location.href = targetURL;
+    } catch (err) {
+      showMsg(`添加规则失败: ${err.message}`, true);
+    }
+  });
+
+  activityBody.addEventListener("click", (e) => {
+    const btn = e.target.closest("button[data-act-op='add-rule']");
+    if (!btn) return;
+    const host = String(btn.dataset.host || "").trim();
+    if (!host) {
+      showMsg("该记录目标为空，无法创建规则", true);
+      return;
+    }
+    openFormWithHost(host);
+    showMsg(`准备添加规则: ${host}`);
+  });
+
+  hideForm();
+}
+
 function renderRules() {
   if (!rulesBody) return;
   rulesBody.innerHTML = "";
   const items = Array.isArray(rulesCache) ? rulesCache : [];
   items.forEach((rule) => {
     const tr = document.createElement("tr");
+    tr.dataset.ruleId = String(rule.id);
     let actionText = rule.action;
     if (rule.action === "BLOCK") {
       actionText = "BLOCK:404";
@@ -185,6 +255,17 @@ function renderRules() {
     `;
     rulesBody.appendChild(tr);
   });
+}
+
+function highlightRuleByID(ruleID) {
+  if (!rulesBody || !ruleID) return;
+  const row = rulesBody.querySelector(`tr[data-rule-id='${String(ruleID)}']`);
+  if (!row) return;
+  row.classList.add("flash-row");
+  row.scrollIntoView({ behavior: "smooth", block: "center" });
+  window.setTimeout(() => {
+    row.classList.remove("flash-row");
+  }, 2200);
 }
 
 function renderUpstreams() {
@@ -436,6 +517,8 @@ async function init() {
     }
 
     if (page === "activities") {
+      await loadUpstreams();
+      bindActivityRuleEvents();
       await loadActivities();
       startSSE();
       showMsg("活动页已就绪");
@@ -446,6 +529,15 @@ async function init() {
       await loadUpstreams();
       bindRulesEvents();
       await loadRules();
+      const params = new URLSearchParams(window.location.search || "");
+      const highlightID = params.get("highlight_rule_id");
+      if (highlightID) {
+        highlightRuleByID(highlightID);
+        params.delete("highlight_rule_id");
+        const nextQuery = params.toString();
+        const nextURL = nextQuery ? `${window.location.pathname}?${nextQuery}` : window.location.pathname;
+        window.history.replaceState(null, "", nextURL);
+      }
       showMsg("规则页已就绪");
       return;
     }

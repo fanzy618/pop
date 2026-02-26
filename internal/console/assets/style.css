@@ -175,6 +175,19 @@ button.danger {
   color: var(--subtle);
 }
 
+.flash-row {
+  animation: flashRow 2.2s ease;
+}
+
+@keyframes flashRow {
+  0% {
+    background: #fff4ce;
+  }
+  100% {
+    background: transparent;
+  }
+}
+
 @media (max-width: 760px) {
   .topbar {
     padding-top: 16px;
