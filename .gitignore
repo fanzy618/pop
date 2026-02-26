@@ -1,0 +1,6 @@
+pop.sqlite
+*.db
+.tmp/
+bin/
+pop
+local.json

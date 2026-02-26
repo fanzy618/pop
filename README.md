@@ -105,3 +105,7 @@ curl -x http://127.0.0.1:5128 http://example.com -I
 ```bash
 curl http://127.0.0.1:5080/api/stats
 ```
+
+## License
+
+Licensed under the Apache License, Version 2.0. See `LICENSE`.
