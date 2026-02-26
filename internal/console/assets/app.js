@@ -457,6 +457,57 @@ async function init() {
       return;
     }
 
+    if (page === "data") {
+      const backupBtn = document.getElementById("backup-download");
+      const restoreBtn = document.getElementById("restore-submit");
+      const restoreFile = document.getElementById("restore-file");
+
+      if (backupBtn) {
+        backupBtn.addEventListener("click", async () => {
+          try {
+            const payload = await api("/api/data/backup");
+            const stamp = new Date().toISOString().replace(/[:]/g, "-");
+            const filename = `pop-backup-${stamp}.json`;
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            URL.revokeObjectURL(url);
+            showMsg("备份下载成功");
+          } catch (err) {
+            showMsg(`备份失败: ${err.message}`, true);
+          }
+        });
+      }
+
+      if (restoreBtn && restoreFile) {
+        restoreBtn.addEventListener("click", async () => {
+          try {
+            const file = restoreFile.files && restoreFile.files[0];
+            if (!file) {
+              throw new Error("请先选择备份文件");
+            }
+            const text = await file.text();
+            const payload = JSON.parse(text);
+            await api("/api/data/restore", {
+              method: "POST",
+              body: JSON.stringify(payload),
+            });
+            showMsg("恢复成功，规则与上游已热更新");
+          } catch (err) {
+            showMsg(`恢复失败: ${err.message}`, true);
+          }
+        });
+      }
+
+      showMsg("数据管理页已就绪");
+      return;
+    }
+
     showMsg("未知页面", true);
   } catch (err) {
     showMsg(`初始化失败: ${err.message}`, true);

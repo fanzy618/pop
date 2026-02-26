@@ -269,6 +269,101 @@ func TestConsoleRuleCreateWithUpstreamReference(t *testing.T) {
 	}
 }
 
+func TestConsoleDataBackupAndRestore(t *testing.T) {
+	t.Parallel()
+
+	consoleURL, _, _, client := setupConsoleAndProxy(t)
+
+	postJSON(t, client, consoleURL+"/api/upstreams", map[string]any{"name": "bk-up", "url": "http://127.0.0.1:18080", "enabled": true}, http.StatusCreated)
+
+	upResp, err := client.Get(consoleURL + "/api/upstreams")
+	if err != nil {
+		t.Fatalf("GET upstreams: %v", err)
+	}
+	defer upResp.Body.Close()
+	var upstreams []config.UpstreamConfig
+	if err := json.NewDecoder(upResp.Body).Decode(&upstreams); err != nil {
+		t.Fatalf("decode upstreams: %v", err)
+	}
+	if len(upstreams) != 1 {
+		t.Fatalf("upstreams length=%d, want=1", len(upstreams))
+	}
+
+	postJSON(t, client, consoleURL+"/api/rules", map[string]any{
+		"enabled":     true,
+		"pattern":     "*.restore.local",
+		"action":      "PROXY",
+		"upstream_id": upstreams[0].ID,
+	}, http.StatusCreated)
+
+	bkResp, err := client.Get(consoleURL + "/api/data/backup")
+	if err != nil {
+		t.Fatalf("GET backup: %v", err)
+	}
+	defer bkResp.Body.Close()
+	if bkResp.StatusCode != http.StatusOK {
+		t.Fatalf("backup status=%d, want=%d", bkResp.StatusCode, http.StatusOK)
+	}
+	var backup map[string]any
+	if err := json.NewDecoder(bkResp.Body).Decode(&backup); err != nil {
+		t.Fatalf("decode backup: %v", err)
+	}
+	if backup["data_format_version"] == "" {
+		t.Fatalf("backup data_format_version should not be empty")
+	}
+
+	postJSON(t, client, consoleURL+"/api/rules", map[string]any{"enabled": true, "pattern": "temp.local", "action": "DIRECT"}, http.StatusCreated)
+
+	body, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatalf("marshal backup payload: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, consoleURL+"/api/data/restore", strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatalf("new restore request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST restore: %v", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(res.Body)
+		t.Fatalf("restore status=%d want=%d body=%s", res.StatusCode, http.StatusOK, strings.TrimSpace(string(raw)))
+	}
+
+	rulesResp, err := client.Get(consoleURL + "/api/rules")
+	if err != nil {
+		t.Fatalf("GET rules: %v", err)
+	}
+	defer rulesResp.Body.Close()
+	var rulesList []config.RuleConfig
+	if err := json.NewDecoder(rulesResp.Body).Decode(&rulesList); err != nil {
+		t.Fatalf("decode rules: %v", err)
+	}
+	if len(rulesList) != 1 {
+		t.Fatalf("rules length=%d, want=1", len(rulesList))
+	}
+	if rulesList[0].Pattern != "*.restore.local" {
+		t.Fatalf("restored rule pattern=%s", rulesList[0].Pattern)
+	}
+}
+
+func TestConsoleDataPageServed(t *testing.T) {
+	t.Parallel()
+
+	consoleURL, _, _, client := setupConsoleAndProxy(t)
+	resp, err := client.Get(consoleURL + "/data")
+	if err != nil {
+		t.Fatalf("GET data page: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d want=%d", resp.StatusCode, http.StatusOK)
+	}
+}
+
 func setupConsoleAndProxy(t *testing.T) (consoleURL string, proxyURL string, dbPath string, client *http.Client) {
 	t.Helper()
 

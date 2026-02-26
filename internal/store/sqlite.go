@@ -12,7 +12,17 @@ import (
 	_ "modernc.org/sqlite"
 
 	"github.com/fanzy618/pop/internal/config"
+	"github.com/fanzy618/pop/internal/rules"
 )
+
+const CurrentDataFormatVersion = "1"
+
+type BackupPayload struct {
+	DataFormatVersion string                  `json:"data_format_version"`
+	CreatedAt         string                  `json:"created_at"`
+	Upstreams         []config.UpstreamConfig `json:"upstreams"`
+	Rules             []config.RuleConfig     `json:"rules"`
+}
 
 type SQLite struct {
 	db *sql.DB
@@ -65,7 +75,10 @@ func (s *SQLite) ensureSchema() error {
 	}
 
 	if !hasUpstreams && !hasRules {
-		return s.createSchema()
+		if err := s.createSchema(); err != nil {
+			return err
+		}
+		return s.ensureMetaVersion()
 	}
 
 	legacy, err := s.isLegacySchema()
@@ -77,12 +90,18 @@ func (s *SQLite) ensureSchema() error {
 			return err
 		}
 	}
-
-	return s.ensureIndexes()
+	if err := s.ensureIndexes(); err != nil {
+		return err
+	}
+	return s.ensureMetaVersion()
 }
 
 func (s *SQLite) createSchema() error {
 	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS system_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );`,
 		`CREATE TABLE IF NOT EXISTS upstreams (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT,
@@ -118,6 +137,16 @@ func (s *SQLite) ensureIndexes() error {
 		if _, err := s.db.Exec(stmt); err != nil {
 			return fmt.Errorf("ensure sqlite index: %w", err)
 		}
+	}
+	return nil
+}
+
+func (s *SQLite) ensureMetaVersion() error {
+	if _, err := s.db.Exec(`CREATE TABLE IF NOT EXISTS system_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);`); err != nil {
+		return fmt.Errorf("ensure system_meta table: %w", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO system_meta(key, value) VALUES ('data_format_version', ?) ON CONFLICT(key) DO NOTHING`, CurrentDataFormatVersion); err != nil {
+		return fmt.Errorf("ensure data_format_version: %w", err)
 	}
 	return nil
 }
@@ -188,6 +217,10 @@ func (s *SQLite) migrateLegacySchema() error {
 	}()
 
 	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS system_meta (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );`,
 		`ALTER TABLE rules RENAME TO rules_old;`,
 		`ALTER TABLE upstreams RENAME TO upstreams_old;`,
 		`CREATE TABLE upstreams (
@@ -228,6 +261,7 @@ func (s *SQLite) migrateLegacySchema() error {
 		`DROP TABLE upstreams_old;`,
 		`CREATE INDEX IF NOT EXISTS idx_rules_created_at_desc ON rules(created_at DESC);`,
 		`CREATE INDEX IF NOT EXISTS idx_rules_upstream_ref ON rules(upstream_ref);`,
+		`INSERT INTO system_meta(key, value) VALUES ('data_format_version', '` + CurrentDataFormatVersion + `') ON CONFLICT(key) DO UPDATE SET value=excluded.value;`,
 	}
 
 	for _, stmt := range stmts {
@@ -431,6 +465,115 @@ func (s *SQLite) DeleteRule(id int64) error {
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		return sql.ErrNoRows
+	}
+	return nil
+}
+
+func (s *SQLite) GetDataFormatVersion() (string, error) {
+	if err := s.ensureMetaVersion(); err != nil {
+		return "", err
+	}
+	var version string
+	err := s.db.QueryRow(`SELECT value FROM system_meta WHERE key='data_format_version'`).Scan(&version)
+	if err != nil {
+		return "", fmt.Errorf("get data format version: %w", err)
+	}
+	return version, nil
+}
+
+func (s *SQLite) ExportBackup() (*BackupPayload, error) {
+	version, err := s.GetDataFormatVersion()
+	if err != nil {
+		return nil, err
+	}
+	upstreams, err := s.ListUpstreams()
+	if err != nil {
+		return nil, err
+	}
+	rulesList, err := s.ListRules()
+	if err != nil {
+		return nil, err
+	}
+	return &BackupPayload{
+		DataFormatVersion: version,
+		CreatedAt:         time.Now().UTC().Format(time.RFC3339),
+		Upstreams:         upstreams,
+		Rules:             rulesList,
+	}, nil
+}
+
+func (s *SQLite) RestoreBackup(payload *BackupPayload) error {
+	if payload == nil {
+		return errors.New("backup payload is required")
+	}
+	if strings.TrimSpace(payload.DataFormatVersion) == "" {
+		return errors.New("data_format_version is required")
+	}
+	if payload.DataFormatVersion != CurrentDataFormatVersion {
+		return fmt.Errorf("unsupported data_format_version: %s", payload.DataFormatVersion)
+	}
+	if err := config.ValidateRuntime(payload.Upstreams, payload.Rules); err != nil {
+		return fmt.Errorf("backup payload validation failed: %w", err)
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin restore transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	if _, err = tx.Exec(`DELETE FROM rules`); err != nil {
+		return fmt.Errorf("clear rules: %w", err)
+	}
+	if _, err = tx.Exec(`DELETE FROM upstreams`); err != nil {
+		return fmt.Errorf("clear upstreams: %w", err)
+	}
+
+	for _, up := range payload.Upstreams {
+		if _, err = tx.Exec(
+			`INSERT INTO upstreams(id, name, url, enabled, created_at) VALUES (?, ?, ?, ?, ?)`,
+			up.ID,
+			nullString(up.Name),
+			up.URL,
+			boolToInt(up.Enabled),
+			time.Now().UnixMilli(),
+		); err != nil {
+			return fmt.Errorf("restore upstream %d: %w", up.ID, err)
+		}
+	}
+
+	for _, r := range payload.Rules {
+		if r.Action == rules.ActionBlock {
+			r.BlockStatus = 404
+		}
+		createdAt := r.CreatedAt
+		if createdAt <= 0 {
+			createdAt = time.Now().UnixMilli()
+		}
+		if _, err = tx.Exec(
+			`INSERT INTO rules(id, enabled, pattern, action, upstream_ref, block_status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			r.ID,
+			boolToInt(r.Enabled),
+			r.Pattern,
+			r.Action,
+			nullInt64(r.UpstreamID),
+			nullInt(r.BlockStatus),
+			createdAt,
+		); err != nil {
+			return fmt.Errorf("restore rule %d: %w", r.ID, err)
+		}
+	}
+
+	if _, err = tx.Exec(`INSERT INTO system_meta(key, value) VALUES ('data_format_version', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, CurrentDataFormatVersion); err != nil {
+		return fmt.Errorf("set data_format_version: %w", err)
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit restore transaction: %w", err)
 	}
 	return nil
 }

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>POP 控制台 - 数据管理</title>
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body data-page="data">
+  <header class="topbar">
+    <h1>POP 控制台</h1>
+    <p>Proxy of Proxy 运行面板</p>
+    <nav class="tabs" aria-label="控制台导航">
+      <a class="tab" href="/stats">实时统计</a>
+      <a class="tab" href="/activities">实时活动</a>
+      <a class="tab" href="/rules">规则管理</a>
+      <a class="tab" href="/upstreams">上游管理</a>
+      <a class="tab active" href="/data">数据管理</a>
+    </nav>
+  </header>
+
+  <main class="layout">
+    <section class="card">
+      <h2>数据管理</h2>
+      <p class="hint">备份会导出 SQLite 中全部规则与上游；恢复将全量替换当前数据并立即生效。</p>
+      <div class="form-inline">
+        <button id="backup-download" type="button">下载备份</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>恢复备份</h2>
+      <p class="hint">仅支持 JSON 备份文件，且 data_format_version 必须兼容。</p>
+      <div class="form-inline">
+        <input id="restore-file" type="file" accept="application/json,.json">
+        <button id="restore-submit" type="button" class="danger">执行恢复</button>
+      </div>
+    </section>
+
+    <p id="msg" class="msg"></p>
+  </main>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>

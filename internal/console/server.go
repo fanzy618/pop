@@ -75,6 +75,8 @@ func NewServer(cfg *config.Config, db *store.SQLite, proxyServer *proxy.Server, 
 	mux.HandleFunc("/api/rules", s.handleRules)
 	mux.HandleFunc("/api/rules/", s.handleRuleByID)
 	mux.HandleFunc("/api/rules/reorder", s.handleRuleReorder)
+	mux.HandleFunc("/api/data/backup", s.handleDataBackup)
+	mux.HandleFunc("/api/data/restore", s.handleDataRestore)
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/activities", s.handleActivities)
 	mux.HandleFunc("/api/activities/stream", s.handleActivitiesStream)
@@ -99,6 +101,7 @@ func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
 		"/activities": "assets/activities.html",
 		"/rules":      "assets/rules.html",
 		"/upstreams":  "assets/upstreams.html",
+		"/data":       "assets/data.html",
 	}
 
 	assetPath, ok := pages[r.URL.Path]
@@ -367,6 +370,44 @@ func (s *Server) handleRuleReorder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "reorder_disabled": true})
+}
+
+func (s *Server) handleDataBackup(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	payload, err := s.db.ExportBackup()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, payload)
+}
+
+func (s *Server) handleDataRestore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var payload store.BackupPayload
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid json", http.StatusBadRequest)
+		return
+	}
+	if err := s.db.RestoreBackup(&payload); err != nil {
+		if strings.Contains(err.Error(), "unsupported data_format_version") {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.rebuildRuntime(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "upstreams": len(payload.Upstreams), "rules": len(payload.Rules)})
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {

@@ -9,6 +9,18 @@ import (
 	"github.com/fanzy618/pop/internal/rules"
 )
 
+func seedBackupData(t *testing.T, db *SQLite) {
+	t.Helper()
+	up := config.UpstreamConfig{Name: "backup-up", URL: "http://127.0.0.1:18080", Enabled: true}
+	if err := db.CreateUpstream(&up); err != nil {
+		t.Fatalf("create upstream: %v", err)
+	}
+	r := config.RuleConfig{Enabled: true, Pattern: "*.backup.local", Action: rules.ActionProxy, UpstreamID: up.ID}
+	if err := db.CreateRule(&r); err != nil {
+		t.Fatalf("create rule: %v", err)
+	}
+}
+
 func TestOpenSQLiteInitializesEmptyDB(t *testing.T) {
 	t.Parallel()
 
@@ -92,5 +104,71 @@ func TestDeleteUpstreamBlockedByRuleReference(t *testing.T) {
 
 	if err := db.DeleteUpstream(upstreams[0].ID); err == nil {
 		t.Fatalf("expected foreign key constraint error")
+	}
+}
+
+func TestExportRestoreBackupRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "pop.sqlite")
+	db, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	seedBackupData(t, db)
+
+	backup, err := db.ExportBackup()
+	if err != nil {
+		t.Fatalf("export backup: %v", err)
+	}
+	if backup.DataFormatVersion != CurrentDataFormatVersion {
+		t.Fatalf("version=%s, want=%s", backup.DataFormatVersion, CurrentDataFormatVersion)
+	}
+	if len(backup.Upstreams) != 1 || len(backup.Rules) != 1 {
+		t.Fatalf("unexpected backup sizes: upstreams=%d rules=%d", len(backup.Upstreams), len(backup.Rules))
+	}
+
+	if err := db.DeleteRule(backup.Rules[0].ID); err != nil {
+		t.Fatalf("delete rule: %v", err)
+	}
+	if err := db.DeleteUpstream(backup.Upstreams[0].ID); err != nil {
+		t.Fatalf("delete upstream: %v", err)
+	}
+
+	if err := db.RestoreBackup(backup); err != nil {
+		t.Fatalf("restore backup: %v", err)
+	}
+
+	rulesList, err := db.ListRules()
+	if err != nil {
+		t.Fatalf("list rules: %v", err)
+	}
+	upstreams, err := db.ListUpstreams()
+	if err != nil {
+		t.Fatalf("list upstreams: %v", err)
+	}
+	if len(upstreams) != 1 || len(rulesList) != 1 {
+		t.Fatalf("unexpected restore sizes: upstreams=%d rules=%d", len(upstreams), len(rulesList))
+	}
+	if rulesList[0].Pattern != "*.backup.local" {
+		t.Fatalf("restored pattern=%s", rulesList[0].Pattern)
+	}
+}
+
+func TestRestoreBackupRejectsUnsupportedVersion(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "pop.sqlite")
+	db, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	err = db.RestoreBackup(&BackupPayload{DataFormatVersion: "999"})
+	if err == nil {
+		t.Fatalf("expected restore to fail for unsupported version")
 	}
 }

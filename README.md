@@ -15,6 +15,7 @@ If no rule matches, POP uses `default_action` (default: `DIRECT`).
 - Runtime telemetry: live activities, in-flight requests, counters, bandwidth
 - Web console API and pages (no authentication)
 - Rules and upstreams persisted in SQLite
+- Full backup/restore for SQLite data
 
 ## Requirements
 
@@ -82,9 +83,13 @@ Configure your OS/browser HTTP proxy to POP's `proxy_listen`.
 - `PUT /api/rules/:id`
 - `DELETE /api/rules/:id`
 - `POST /api/rules/reorder`
+- `GET /api/data/backup`
+- `POST /api/data/restore`
 - `GET /api/stats`
 - `GET /api/activities?limit=100`
 - `GET /api/activities/stream` (SSE)
+
+Backup payload includes `data_format_version`; restore currently requires matching version.
 
 ## Verify Locally
 
