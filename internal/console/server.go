@@ -24,21 +24,17 @@ import (
 var staticAssets embed.FS
 
 type Server struct {
-	configPath string
-	db         *store.SQLite
-	proxy      *proxy.Server
-	telemetry  *telemetry.Store
+	db        *store.SQLite
+	proxy     *proxy.Server
+	telemetry *telemetry.Store
 
 	mu  sync.RWMutex
 	cfg *config.Config
 
-	username string
-	password string
-
 	mux http.Handler
 }
 
-func NewServer(cfg *config.Config, configPath string, db *store.SQLite, proxyServer *proxy.Server, telemetryStore *telemetry.Store) (*Server, error) {
+func NewServer(cfg *config.Config, db *store.SQLite, proxyServer *proxy.Server, telemetryStore *telemetry.Store) (*Server, error) {
 	if cfg == nil {
 		cfg = config.Default()
 	}
@@ -53,13 +49,10 @@ func NewServer(cfg *config.Config, configPath string, db *store.SQLite, proxySer
 	}
 
 	s := &Server{
-		configPath: configPath,
-		db:         db,
-		proxy:      proxyServer,
-		telemetry:  telemetryStore,
-		cfg:        cloneConfig(cfg),
-		username:   cfg.Auth.Username,
-		password:   cfg.Auth.Password,
+		db:        db,
+		proxy:     proxyServer,
+		telemetry: telemetryStore,
+		cfg:       cloneConfig(cfg),
 	}
 
 	if err := s.applyBaseConfigLocked(cloneConfig(cfg)); err != nil {
@@ -86,24 +79,12 @@ func NewServer(cfg *config.Config, configPath string, db *store.SQLite, proxySer
 	mux.HandleFunc("/api/activities", s.handleActivities)
 	mux.HandleFunc("/api/activities/stream", s.handleActivitiesStream)
 
-	s.mux = s.authMiddleware(mux)
+	s.mux = mux
 	return s, nil
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.mux.ServeHTTP(w, r)
-}
-
-func (s *Server) authMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, pass, ok := r.BasicAuth()
-		if !ok || user != s.username || pass != s.password {
-			w.Header().Set("WWW-Authenticate", `Basic realm="pop-console"`)
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {
@@ -158,7 +139,6 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			"proxy_listen":   cfg.ProxyListen,
 			"console_listen": cfg.ConsoleListen,
 			"sqlite_path":    cfg.SQLitePath,
-			"auth":           cfg.Auth,
 			"default_action": cfg.DefaultAction,
 			"upstreams":      upstreams,
 			"rules":          rules,
@@ -493,24 +473,8 @@ func (s *Server) applyBaseConfigLocked(next *config.Config) error {
 		return err
 	}
 
-	if s.configPath != "" {
-		if err := config.Save(s.configPath, next); err != nil {
-			return err
-		}
-	}
-
 	s.cfg = next
-	s.username = next.Auth.Username
-	s.password = next.Auth.Password
 	return nil
-}
-
-func isUniqueConstraint(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "unique") || strings.Contains(msg, "constraint failed")
 }
 
 func parseIntPath(raw string) (int64, bool) {

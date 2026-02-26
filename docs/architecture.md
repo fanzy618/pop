@@ -10,12 +10,12 @@ POP 采用单进程、模块化结构：
 ### 核心模块
 
 - `cmd/pop/main.go`：进程入口与服务装配。
-- `internal/config`：配置模型、校验、加载与原子保存。
+- `internal/config`：配置模型与校验。
 - `internal/rules`：规则匹配器与决策对象。
 - `internal/proxy`：HTTP/CONNECT 代理执行、DIRECT/PROXY/BLOCK。
 - `internal/upstream`：上游代理管理与 transport 复用。
 - `internal/telemetry`：活动流与统计聚合。
-- `internal/console`：鉴权与 Console API。
+- `internal/console`：Console API。
 
 ## 2. 请求处理流程
 
@@ -31,15 +31,14 @@ POP 采用单进程、模块化结构：
 
 ## 3. 配置与热生效
 
-- 配置源：本地 JSON 文件。
-- 加载时执行结构与业务校验。
+- 配置源：默认值 + 环境变量 + 命令行参数（`CLI > ENV > default`）。
+- 启动时执行结构与业务校验。
 - Console API 更新配置后：
   1. 校验新配置。
   2. 构建新 matcher 与 upstream manager。
   3. 应用到 proxy 运行态。
-  4. 原子写入配置文件（临时文件 + rename）。
 
-该流程保证配置更新与持久化的一致性，并尽量降低运行时中断风险。
+该流程保证运行态更新一致性，并尽量降低中断风险。
 
 ## 4. 资源控制策略
 
@@ -58,8 +57,7 @@ POP 采用单进程、模块化结构：
 
 - 配置错误：拒绝加载/应用并返回明确错误。
 - 上游不可用：返回 `502 Bad Gateway`。
-- BLOCK 动作：按规则或默认阻断码返回（默认 404）。
-- 鉴权失败：Console API 返回 `401 Unauthorized`。
+- BLOCK 动作：按规则阻断码返回，Web Console 创建规则时固定为 `404`。
 
 ## 7. 演进方向
 

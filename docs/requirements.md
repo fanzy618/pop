@@ -55,7 +55,7 @@ POP（Proxy of Proxy）是一个面向个人用户的本地 HTTP 代理服务。
 
 ### 3.5 Web Console
 
-- 使用简单用户名/密码保护（Basic Auth）。
+- 当前版本 Web Console 无认证。
 - 可管理配置、规则、上游代理。
 - 规则与上游主键由数据库自动生成。
 - 创建规则时使用统一动作下拉：`DIRECT` / `BLOCK(404)` / `上游`。

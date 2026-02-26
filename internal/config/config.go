@@ -1,11 +1,8 @@
 package config
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,13 +15,7 @@ type Config struct {
 	ProxyListen   string       `json:"proxy_listen"`
 	ConsoleListen string       `json:"console_listen"`
 	SQLitePath    string       `json:"sqlite_path,omitempty"`
-	Auth          AuthConfig   `json:"auth"`
 	DefaultAction rules.Action `json:"default_action"`
-}
-
-type AuthConfig struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
 }
 
 type UpstreamConfig struct {
@@ -46,64 +37,11 @@ type RuleConfig struct {
 
 func Default() *Config {
 	return &Config{
-		ProxyListen:   "127.0.0.1:8080",
-		ConsoleListen: "127.0.0.1:9090",
-		Auth: AuthConfig{
-			Username: "admin",
-			Password: "admin",
-		},
+		ProxyListen:   "0.0.0.0:5000",
+		ConsoleListen: "127.0.0.1:5080",
+		SQLitePath:    "./pop.sqlite",
 		DefaultAction: rules.ActionDirect,
 	}
-}
-
-func Load(path string) (*Config, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return Default(), nil
-		}
-		return nil, fmt.Errorf("read config: %w", err)
-	}
-
-	cfg := Default()
-	if err := json.Unmarshal(raw, cfg); err != nil {
-		return nil, fmt.Errorf("decode config: %w", err)
-	}
-
-	if err := cfg.Validate(); err != nil {
-		return nil, err
-	}
-
-	return cfg, nil
-}
-
-func Save(path string, cfg *Config) error {
-	if cfg == nil {
-		return errors.New("config cannot be nil")
-	}
-	if err := cfg.Validate(); err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("ensure config dir: %w", err)
-	}
-
-	data, err := json.MarshalIndent(cfg, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode config: %w", err)
-	}
-
-	tmpPath := path + ".tmp"
-	if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
-		return fmt.Errorf("write temp config: %w", err)
-	}
-
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("commit config atomically: %w", err)
-	}
-
-	return nil
 }
 
 func (c *Config) Validate() error {
@@ -111,14 +49,19 @@ func (c *Config) Validate() error {
 		return errors.New("config cannot be nil")
 	}
 
+	c.ProxyListen = strings.TrimSpace(c.ProxyListen)
 	if c.ProxyListen == "" {
 		return errors.New("proxy_listen cannot be empty")
 	}
-	if c.Auth.Username == "" {
-		c.Auth.Username = "admin"
+
+	c.ConsoleListen = strings.TrimSpace(c.ConsoleListen)
+	if c.ConsoleListen == "" {
+		return errors.New("console_listen cannot be empty")
 	}
-	if c.Auth.Password == "" {
-		c.Auth.Password = "admin"
+
+	c.SQLitePath = strings.TrimSpace(c.SQLitePath)
+	if c.SQLitePath == "" {
+		c.SQLitePath = Default().SQLitePath
 	}
 
 	if c.DefaultAction == "" {

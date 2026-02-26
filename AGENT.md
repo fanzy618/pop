@@ -10,7 +10,7 @@
 
 - Default action for unmatched traffic: `DIRECT`.
 - Upstream proxy support in MVP: HTTP proxy only.
-- Block default status code: `404` (rule can override).
+- Block default status code: `404`.
 - Rule matching semantics: first-match-wins by explicit order.
 
 ## Required behavior
@@ -18,9 +18,9 @@
 - User can configure OS/system proxy to POP.
 - Internal domains can be routed directly.
 - External domains can be routed to different upstream proxies (A/B).
-- Ad domains can be blocked with configurable status code.
+- Ad domains can be blocked with status code `404` from web console rules.
 - Unmatched domains use configurable default behavior.
-- Web console is protected by simple username/password auth.
+- Web console does not require auth in current version.
 - Web console shows live activity and simple runtime stats.
 - Rules are persisted and restored after restart.
 
@@ -54,4 +54,4 @@ Do not move to the next milestone until the current milestone tests pass and the
 - M3: Upstream HTTP proxy routing.
 - M4: Config persistence and restart restore.
 - M5: Runtime telemetry (activity stream, stats, TTL, bounded memory).
-- M6: Authenticated web console API (no UI test automation required).
+- M6: Web console API (no UI test automation required).

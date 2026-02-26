@@ -2,34 +2,36 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
-	"path/filepath"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/fanzy618/pop/internal/config"
 	"github.com/fanzy618/pop/internal/console"
 	"github.com/fanzy618/pop/internal/proxy"
+	"github.com/fanzy618/pop/internal/rules"
 	"github.com/fanzy618/pop/internal/store"
 	"github.com/fanzy618/pop/internal/telemetry"
 	"github.com/fanzy618/pop/internal/upstream"
 )
 
+const (
+	envProxyListen   = "POP_PROXY_LISTEN"
+	envConsoleListen = "POP_CONSOLE_LISTEN"
+	envSQLitePath    = "POP_SQLITE_PATH"
+	envDefaultAction = "POP_DEFAULT_ACTION"
+)
+
 func main() {
-	configPath := flag.String("config", "./pop.json", "config file path")
-	flag.Parse()
-
-	cfg, err := config.Load(*configPath)
+	cfg, err := resolveRuntimeConfig(os.Args[1:], os.Getenv)
 	if err != nil {
-		log.Fatalf("load config failed: %v", err)
+		log.Fatalf("resolve config failed: %v", err)
 	}
 
-	sqlitePath := cfg.SQLitePath
-	if sqlitePath == "" {
-		sqlitePath = filepath.Join(filepath.Dir(*configPath), "pop.sqlite")
-	}
-
-	db, err := store.OpenSQLite(sqlitePath)
+	db, err := store.OpenSQLite(cfg.SQLitePath)
 	if err != nil {
 		log.Fatalf("open sqlite failed: %v", err)
 	}
@@ -56,7 +58,7 @@ func main() {
 	handler := proxy.NewServerWithDeps(cfg.BuildMatcher(ruleItems), upstreams)
 	handler.SetTelemetry(telStore)
 
-	consoleHandler, err := console.NewServer(cfg, *configPath, db, handler, telStore)
+	consoleHandler, err := console.NewServer(cfg, db, handler, telStore)
 	if err != nil {
 		log.Fatalf("build console server failed: %v", err)
 	}
@@ -68,13 +70,63 @@ func main() {
 		}
 	}()
 
-	srv := &http.Server{
-		Addr:    cfg.ProxyListen,
-		Handler: handler,
-	}
-
-	log.Printf("pop proxy listening on %s (config: %s)", cfg.ProxyListen, *configPath)
+	srv := &http.Server{Addr: cfg.ProxyListen, Handler: handler}
+	log.Printf("pop proxy listening on %s", cfg.ProxyListen)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("proxy server stopped: %v", err)
 	}
+}
+
+func resolveRuntimeConfig(args []string, getenv func(string) string) (*config.Config, error) {
+	cfg := config.Default()
+
+	if v := strings.TrimSpace(getenv(envProxyListen)); v != "" {
+		cfg.ProxyListen = v
+	}
+	if v := strings.TrimSpace(getenv(envConsoleListen)); v != "" {
+		cfg.ConsoleListen = v
+	}
+	if v := strings.TrimSpace(getenv(envSQLitePath)); v != "" {
+		cfg.SQLitePath = v
+	}
+	if v := strings.TrimSpace(getenv(envDefaultAction)); v != "" {
+		cfg.DefaultAction = rules.Action(strings.ToUpper(v))
+	}
+
+	fs := flag.NewFlagSet("pop", flag.ContinueOnError)
+	proxyListen := cfg.ProxyListen
+	consoleListen := cfg.ConsoleListen
+	sqlitePath := cfg.SQLitePath
+	defaultAction := string(cfg.DefaultAction)
+
+	fs.StringVar(&proxyListen, "proxy-listen", proxyListen, "proxy listen address")
+	fs.StringVar(&proxyListen, "p", proxyListen, "proxy listen address (short)")
+	fs.StringVar(&consoleListen, "console-listen", consoleListen, "console listen address")
+	fs.StringVar(&consoleListen, "c", consoleListen, "console listen address (short)")
+	fs.StringVar(&sqlitePath, "sqlite-path", sqlitePath, "sqlite file path")
+	fs.StringVar(&sqlitePath, "s", sqlitePath, "sqlite file path (short)")
+	fs.StringVar(&defaultAction, "default-action", defaultAction, "default action: DIRECT|PROXY|BLOCK")
+	fs.StringVar(&defaultAction, "a", defaultAction, "default action (short)")
+
+	fs.Usage = func() {
+		_, _ = fmt.Fprintf(fs.Output(), "Usage: pop [OPTIONS]\n\n")
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+	if len(fs.Args()) > 0 {
+		return nil, fmt.Errorf("unexpected arguments: %s", strings.Join(fs.Args(), " "))
+	}
+
+	cfg.ProxyListen = strings.TrimSpace(proxyListen)
+	cfg.ConsoleListen = strings.TrimSpace(consoleListen)
+	cfg.SQLitePath = strings.TrimSpace(sqlitePath)
+	cfg.DefaultAction = rules.Action(strings.ToUpper(strings.TrimSpace(defaultAction)))
+
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	return cfg, nil
 }

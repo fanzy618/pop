@@ -1,5 +1,4 @@
 GO ?= go
-CONFIG ?= ./pop.example.json
 BIN_DIR ?= ./bin
 BIN ?= $(BIN_DIR)/pop
 MCP_PROMPT ?= docs/mcp-webconsole-smoke.prompt.md
@@ -13,12 +12,12 @@ build: ## Build POP binary to ./bin/pop
 	@mkdir -p $(BIN_DIR)
 	$(GO) build -o $(BIN) ./cmd/pop
 
-run: ## Run POP with example config
-	$(GO) run ./cmd/pop -config $(CONFIG)
+run: ## Run POP with defaults/env/args
+	$(GO) run ./cmd/pop $(ARGS)
 
 run-bg: ## Run POP in background, write pid/log
 	@mkdir -p .tmp
-	@nohup $(GO) run ./cmd/pop -config $(CONFIG) > .tmp/pop.log 2>&1 & echo $$! > .tmp/pop.pid
+	@nohup $(GO) run ./cmd/pop $(ARGS) > .tmp/pop.log 2>&1 & echo $$! > .tmp/pop.pid
 	@echo "POP started: pid=$$(cat .tmp/pop.pid), log=.tmp/pop.log"
 
 stop: ## Stop background POP started by run-bg

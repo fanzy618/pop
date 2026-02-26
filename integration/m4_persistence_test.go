@@ -17,14 +17,13 @@ import (
 func TestConfigPersistsAcrossRestart(t *testing.T) {
 	t.Parallel()
 
-	configPath := filepath.Join(t.TempDir(), "pop.json")
 	dbPath := filepath.Join(t.TempDir(), "pop.sqlite")
-	initial := config.Default()
-	initial.SQLitePath = dbPath
-
-	if err := config.Save(configPath, initial); err != nil {
-		t.Fatalf("save config: %v", err)
+	cfg := config.Default()
+	cfg.SQLitePath = dbPath
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("validate config: %v", err)
 	}
+
 	db, err := store.OpenSQLite(dbPath)
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -38,11 +37,7 @@ func TestConfigPersistsAcrossRestart(t *testing.T) {
 	}
 
 	check := func() {
-		loaded, err := config.Load(configPath)
-		if err != nil {
-			t.Fatalf("load config: %v", err)
-		}
-		db, err := store.OpenSQLite(loaded.SQLitePath)
+		db, err := store.OpenSQLite(cfg.SQLitePath)
 		if err != nil {
 			t.Fatalf("open sqlite: %v", err)
 		}
@@ -61,7 +56,7 @@ func TestConfigPersistsAcrossRestart(t *testing.T) {
 			t.Fatalf("build upstream manager: %v", err)
 		}
 
-		pop := httptest.NewServer(proxy.NewServerWithDeps(loaded.BuildMatcher(ruleItems), mgr))
+		pop := httptest.NewServer(proxy.NewServerWithDeps(cfg.BuildMatcher(ruleItems), mgr))
 		defer pop.Close()
 
 		proxyURL, err := url.Parse(pop.URL)

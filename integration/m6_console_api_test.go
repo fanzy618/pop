@@ -19,10 +19,10 @@ import (
 	"github.com/fanzy618/pop/internal/telemetry"
 )
 
-func TestConsoleAuthRequired(t *testing.T) {
+func TestConsoleNoAuthRequired(t *testing.T) {
 	t.Parallel()
 
-	consoleURL, _, _, _, _ := setupConsoleAndProxy(t)
+	consoleURL, _, _, _ := setupConsoleAndProxy(t)
 
 	resp, err := http.Get(consoleURL + "/api/stats")
 	if err != nil {
@@ -30,17 +30,17 @@ func TestConsoleAuthRequired(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status=%d, want=%d", resp.StatusCode, http.StatusUnauthorized)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d, want=%d", resp.StatusCode, http.StatusOK)
 	}
 }
 
 func TestConsoleIndexAndAssets(t *testing.T) {
 	t.Parallel()
 
-	consoleURL, _, _, _, authClient := setupConsoleAndProxy(t)
+	consoleURL, _, _, client := setupConsoleAndProxy(t)
 
-	indexResp, err := authClient.Get(consoleURL + "/")
+	indexResp, err := client.Get(consoleURL + "/")
 	if err != nil {
 		t.Fatalf("GET index: %v", err)
 	}
@@ -53,7 +53,7 @@ func TestConsoleIndexAndAssets(t *testing.T) {
 		t.Fatalf("index content-type=%q, want contains text/html", ct)
 	}
 
-	assetResp, err := authClient.Get(consoleURL + "/assets/app.js")
+	assetResp, err := client.Get(consoleURL + "/assets/app.js")
 	if err != nil {
 		t.Fatalf("GET app.js: %v", err)
 	}
@@ -67,15 +67,15 @@ func TestConsoleIndexAndAssets(t *testing.T) {
 func TestConsoleRulesCRUDAndReorder(t *testing.T) {
 	t.Parallel()
 
-	consoleURL, _, _, dbPath, authClient := setupConsoleAndProxy(t)
+	consoleURL, _, dbPath, client := setupConsoleAndProxy(t)
 
 	rule1 := map[string]any{"enabled": true, "pattern": "alpha.test", "action": "DIRECT"}
 	rule2 := map[string]any{"enabled": true, "pattern": "*ads*", "action": "BLOCK", "block_status": 410}
 
-	postJSON(t, authClient, consoleURL+"/api/rules", rule1, http.StatusCreated)
-	postJSON(t, authClient, consoleURL+"/api/rules", rule2, http.StatusCreated)
+	postJSON(t, client, consoleURL+"/api/rules", rule1, http.StatusCreated)
+	postJSON(t, client, consoleURL+"/api/rules", rule2, http.StatusCreated)
 
-	resp, err := authClient.Get(consoleURL + "/api/rules")
+	resp, err := client.Get(consoleURL + "/api/rules")
 	if err != nil {
 		t.Fatalf("GET rules: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestConsoleRulesCRUDAndReorder(t *testing.T) {
 		t.Fatalf("block status=%d, want=404", rulesList[1].BlockStatus)
 	}
 
-	postJSON(t, authClient, consoleURL+"/api/rules/reorder", map[string]any{"ids": []int64{rulesList[0].ID, rulesList[1].ID}}, http.StatusOK)
+	postJSON(t, client, consoleURL+"/api/rules/reorder", map[string]any{"ids": []int64{rulesList[0].ID, rulesList[1].ID}}, http.StatusOK)
 
 	db, err := store.OpenSQLite(dbPath)
 	if err != nil {
@@ -118,12 +118,12 @@ func TestConsoleRulesCRUDAndReorder(t *testing.T) {
 func TestConsoleUpstreamsNameOptional(t *testing.T) {
 	t.Parallel()
 
-	consoleURL, _, _, _, authClient := setupConsoleAndProxy(t)
+	consoleURL, _, _, client := setupConsoleAndProxy(t)
 
-	postJSON(t, authClient, consoleURL+"/api/upstreams", map[string]any{"url": "http://127.0.0.1:18080", "enabled": true}, http.StatusCreated)
-	postJSON(t, authClient, consoleURL+"/api/upstreams", map[string]any{"name": "A", "url": "http://127.0.0.1:18081", "enabled": true}, http.StatusCreated)
+	postJSON(t, client, consoleURL+"/api/upstreams", map[string]any{"url": "http://127.0.0.1:18080", "enabled": true}, http.StatusCreated)
+	postJSON(t, client, consoleURL+"/api/upstreams", map[string]any{"name": "A", "url": "http://127.0.0.1:18081", "enabled": true}, http.StatusCreated)
 
-	resp, err := authClient.Get(consoleURL + "/api/upstreams")
+	resp, err := client.Get(consoleURL + "/api/upstreams")
 	if err != nil {
 		t.Fatalf("GET upstreams: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestConsoleUpstreamsNameOptional(t *testing.T) {
 func TestConsoleStatsActivitiesAndSSE(t *testing.T) {
 	t.Parallel()
 
-	consoleURL, proxyURL, _, _, authClient := setupConsoleAndProxy(t)
+	consoleURL, proxyURL, _, client := setupConsoleAndProxy(t)
 
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok"))
@@ -160,7 +160,6 @@ func TestConsoleStatsActivitiesAndSSE(t *testing.T) {
 	eventSeen := make(chan struct{}, 1)
 	go func() {
 		req, _ := http.NewRequest(http.MethodGet, consoleURL+"/api/activities/stream", nil)
-		req.SetBasicAuth("admin", "admin")
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return
@@ -194,7 +193,7 @@ func TestConsoleStatsActivitiesAndSSE(t *testing.T) {
 		t.Fatalf("did not receive SSE activity event")
 	}
 
-	statsResp, err := authClient.Get(consoleURL + "/api/stats")
+	statsResp, err := client.Get(consoleURL + "/api/stats")
 	if err != nil {
 		t.Fatalf("GET stats: %v", err)
 	}
@@ -208,7 +207,7 @@ func TestConsoleStatsActivitiesAndSSE(t *testing.T) {
 		t.Fatalf("expected total_requests >= 1, got %v", stats["total_requests"])
 	}
 
-	actsResp, err := authClient.Get(consoleURL + "/api/activities?limit=5")
+	actsResp, err := client.Get(consoleURL + "/api/activities?limit=5")
 	if err != nil {
 		t.Fatalf("GET activities: %v", err)
 	}
@@ -226,11 +225,11 @@ func TestConsoleStatsActivitiesAndSSE(t *testing.T) {
 func TestConsoleRuleCreateWithUpstreamReference(t *testing.T) {
 	t.Parallel()
 
-	consoleURL, _, _, _, authClient := setupConsoleAndProxy(t)
+	consoleURL, _, _, client := setupConsoleAndProxy(t)
 
-	postJSON(t, authClient, consoleURL+"/api/upstreams", map[string]any{"name": "proxy-a", "url": "http://127.0.0.1:18080", "enabled": true}, http.StatusCreated)
+	postJSON(t, client, consoleURL+"/api/upstreams", map[string]any{"name": "proxy-a", "url": "http://127.0.0.1:18080", "enabled": true}, http.StatusCreated)
 
-	upResp, err := authClient.Get(consoleURL + "/api/upstreams")
+	upResp, err := client.Get(consoleURL + "/api/upstreams")
 	if err != nil {
 		t.Fatalf("GET upstreams: %v", err)
 	}
@@ -243,14 +242,14 @@ func TestConsoleRuleCreateWithUpstreamReference(t *testing.T) {
 		t.Fatalf("expected upstream list not empty")
 	}
 
-	postJSON(t, authClient, consoleURL+"/api/rules", map[string]any{
+	postJSON(t, client, consoleURL+"/api/rules", map[string]any{
 		"enabled":     true,
 		"pattern":     "*.proxy-test.local",
 		"action":      "PROXY",
 		"upstream_id": upstreams[0].ID,
 	}, http.StatusCreated)
 
-	rulesResp, err := authClient.Get(consoleURL + "/api/rules")
+	rulesResp, err := client.Get(consoleURL + "/api/rules")
 	if err != nil {
 		t.Fatalf("GET rules: %v", err)
 	}
@@ -270,14 +269,11 @@ func TestConsoleRuleCreateWithUpstreamReference(t *testing.T) {
 	}
 }
 
-func setupConsoleAndProxy(t *testing.T) (consoleURL string, proxyURL string, configPath string, dbPath string, authClient *http.Client) {
+func setupConsoleAndProxy(t *testing.T) (consoleURL string, proxyURL string, dbPath string, client *http.Client) {
 	t.Helper()
 
-	cfgPath := filepath.Join(t.TempDir(), "pop.json")
 	dbPath = filepath.Join(t.TempDir(), "pop.sqlite")
 	cfg := config.Default()
-	cfg.Auth.Username = "admin"
-	cfg.Auth.Password = "admin"
 	cfg.SQLitePath = dbPath
 
 	proxyServer := proxy.NewServer()
@@ -289,7 +285,7 @@ func setupConsoleAndProxy(t *testing.T) (consoleURL string, proxyURL string, con
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	consoleServer, err := console.NewServer(cfg, cfgPath, db, proxyServer, telStore)
+	consoleServer, err := console.NewServer(cfg, db, proxyServer, telStore)
 	if err != nil {
 		t.Fatalf("new console server: %v", err)
 	}
@@ -300,14 +296,7 @@ func setupConsoleAndProxy(t *testing.T) (consoleURL string, proxyURL string, con
 	proxyHTTP := httptest.NewServer(proxyServer)
 	t.Cleanup(proxyHTTP.Close)
 
-	transport := &http.Transport{}
-	authClient = &http.Client{Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
-		req2 := req.Clone(req.Context())
-		req2.SetBasicAuth("admin", "admin")
-		return transport.RoundTrip(req2)
-	})}
-
-	return consoleHTTP.URL, proxyHTTP.URL, cfgPath, dbPath, authClient
+	return consoleHTTP.URL, proxyHTTP.URL, dbPath, http.DefaultClient
 }
 
 func postJSON(t *testing.T, client *http.Client, url string, payload any, wantStatus int) {
@@ -334,10 +323,4 @@ func postJSON(t *testing.T, client *http.Client, url string, payload any, wantSt
 		bodyRaw, _ := io.ReadAll(resp.Body)
 		t.Fatalf("post %s status=%d want=%d body=%s", url, resp.StatusCode, wantStatus, strings.TrimSpace(string(bodyRaw)))
 	}
-}
-
-type roundTripperFunc func(req *http.Request) (*http.Response, error)
-
-func (f roundTripperFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return f(req)
 }
