@@ -4,3 +4,4 @@ pop.sqlite
 bin/
 pop
 local.json
+.sisyphus/

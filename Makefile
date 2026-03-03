@@ -3,7 +3,14 @@ BIN_DIR ?= ./bin
 BIN ?= $(BIN_DIR)/pop
 MCP_PROMPT ?= docs/mcp-webconsole-smoke.prompt.md
 
-.PHONY: help build run run-bg stop test test-console test-integration fmt vet tidy lint clean mcp-smoke mcp-smoke-path
+DOCKER ?= docker
+DOCKER_IMAGE ?= pop
+GIT_TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo untagged)
+GIT_SHA ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
+DOCKER_VERSION ?= $(GIT_TAG)-$(GIT_SHA)
+DOCKER_IMAGE_REF ?= $(DOCKER_IMAGE):$(DOCKER_VERSION)
+
+.PHONY: help build build-linux-arm64 docker-build run run-bg stop test test-console test-integration fmt vet tidy lint clean mcp-smoke mcp-smoke-path
 
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*## "; printf "\nUsage:\n  make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_.-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -11,6 +18,14 @@ help: ## Show available commands
 build: ## Build POP binary to ./bin/pop
 	@mkdir -p $(BIN_DIR)
 	$(GO) build -o $(BIN) ./cmd/pop
+
+build-linux-arm64: ## Build Linux ARM64 binary to ./bin/pop-linux-arm64
+	@mkdir -p $(BIN_DIR)
+	GOOS=linux GOARCH=arm64 $(GO) build -o $(BIN_DIR)/pop-linux-arm64 ./cmd/pop
+
+docker-build: ## Build Docker image tagged with git tag + commit id
+	$(DOCKER) build -t $(DOCKER_IMAGE_REF) .
+	@echo "Built image: $(DOCKER_IMAGE_REF)"
 
 run: ## Run POP with defaults/env/args
 	$(GO) run ./cmd/pop $(ARGS)

@@ -1,0 +1,11 @@
+# Keep build context small; do not ignore embedded console assets.
+pop.sqlite
+*.db
+.tmp/
+bin/
+pop
+local.json
+.git/
+.sisyphus/
+**/*.sqlite
+**/*.sqlite*
