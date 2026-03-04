@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.7
-
 ARG GO_BUILDER_IMAGE=golang:1.25.5-bookworm
 
 FROM --platform=$BUILDPLATFORM ${GO_BUILDER_IMAGE} AS build

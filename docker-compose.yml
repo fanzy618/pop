@@ -1,0 +1,14 @@
+services:
+  pop:
+    image: pop:latest
+    container_name: pop
+    restart: unless-stopped
+    ports:
+      - "5128:5128"
+      - "5080:5080"
+    environment:
+      POP_PROXY_LISTEN: "0.0.0.0:5128"
+      POP_CONSOLE_LISTEN: "0.0.0.0:5080"
+      POP_SQLITE_PATH: "/data/pop.sqlite"
+    volumes:
+      - ./data:/data

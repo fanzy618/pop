@@ -5,9 +5,8 @@ MCP_PROMPT ?= docs/mcp-webconsole-smoke.prompt.md
 
 DOCKER ?= docker
 DOCKER_IMAGE ?= pop
-GIT_TAG ?= $(shell git describe --tags --abbrev=0 2>/dev/null || echo untagged)
-GIT_SHA ?= $(shell git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
-DOCKER_VERSION ?= $(GIT_TAG)-$(GIT_SHA)
+GIT_DESCRIBE ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo unknown)
+DOCKER_VERSION ?= $(GIT_DESCRIBE)
 DOCKER_IMAGE_REF ?= $(DOCKER_IMAGE):$(DOCKER_VERSION)
 
 .PHONY: help build build-linux-arm64 docker-build run run-bg stop test test-console test-integration fmt vet tidy lint clean mcp-smoke mcp-smoke-path
