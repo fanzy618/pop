@@ -40,6 +40,29 @@ async function api(path, options = {}) {
   return null;
 }
 
+let versionLoadPromise = null;
+async function loadVersion(force = false) {
+  if (versionLoadPromise && !force) return versionLoadPromise;
+  const el = document.getElementById("app-version");
+  if (!el) return null;
+  if (versionLoadPromise && force) {
+    return versionLoadPromise;
+  }
+  versionLoadPromise = (async () => {
+    try {
+      const data = await api("/api/version", { cache: "no-store" });
+      if (data && data.version) {
+        el.textContent = data.version;
+      }
+    } catch (_) {
+      return;
+    } finally {
+      versionLoadPromise = null;
+    }
+  })();
+  return versionLoadPromise;
+}
+
 function fmtBytes(n) {
   const units = ["B", "KB", "MB", "GB"];
   let value = Number(n || 0);
@@ -505,8 +528,23 @@ function bindUpstreamEvents() {
   resetUpstreamForm();
 }
 
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    void loadVersion(true);
+  }
+});
+window.addEventListener("focus", () => {
+  void loadVersion(true);
+});
+window.addEventListener("pageshow", (ev) => {
+  if (ev.persisted) {
+    void loadVersion(true);
+  }
+});
+
 async function init() {
   try {
+    await loadVersion(true);
     if (page === "stats") {
       await loadStats();
       setInterval(() => {

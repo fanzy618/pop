@@ -30,7 +30,7 @@ POP is a local HTTP proxy with a web console for domain-based routing.
 ## Run
 
 ```bash
-go run ./cmd/pop
+make run
 ```
 
 Default listen addresses:
@@ -65,8 +65,10 @@ CLI flags (GNU style):
 Example:
 
 ```bash
-POP_PROXY_LISTEN=127.0.0.1:18080 go run ./cmd/pop --console-listen 127.0.0.1:19090
+POP_PROXY_LISTEN=127.0.0.1:18080 make run ARGS="--console-listen 127.0.0.1:19090"
 ```
+
+`make run` / `make run-bg` 会自动注入当前 git 版本，web console 顶部可直接显示版本号。
 
 ## Console API
 
@@ -84,6 +86,7 @@ POP_PROXY_LISTEN=127.0.0.1:18080 go run ./cmd/pop --console-listen 127.0.0.1:190
 - `GET /api/data/backup`
 - `POST /api/data/restore`
 - `POST /api/data/import-abp`
+- `GET /api/version`
 - `GET /api/stats`
 - `GET /api/activities?limit=100`
 - `GET /api/activities/stream`

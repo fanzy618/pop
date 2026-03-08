@@ -5,7 +5,7 @@ MCP_PROMPT ?= docs/mcp-webconsole-smoke.prompt.md
 
 DOCKER ?= docker
 DOCKER_IMAGE ?= pop
-GIT_DESCRIBE ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo unknown)
+GIT_DESCRIBE ?= $(shell git describe --tags --long --abbrev=6 2>/dev/null || echo unknown)
 DOCKER_VERSION ?= $(GIT_DESCRIBE)
 DOCKER_IMAGE_REF ?= $(DOCKER_IMAGE):$(DOCKER_VERSION)
 
@@ -16,22 +16,22 @@ help: ## Show available commands
 
 build: ## Build POP binary to ./bin/pop
 	@mkdir -p $(BIN_DIR)
-	$(GO) build -o $(BIN) ./cmd/pop
+	$(GO) build -ldflags "-X github.com/fanzy618/pop/internal/buildinfo.Version=$(GIT_DESCRIBE)" -o $(BIN) ./cmd/pop
 
 build-linux-arm64: ## Build Linux ARM64 binary to ./bin/pop-linux-arm64
 	@mkdir -p $(BIN_DIR)
-	GOOS=linux GOARCH=arm64 $(GO) build -o $(BIN_DIR)/pop-linux-arm64 ./cmd/pop
+	GOOS=linux GOARCH=arm64 $(GO) build -ldflags "-X github.com/fanzy618/pop/internal/buildinfo.Version=$(GIT_DESCRIBE)" -o $(BIN_DIR)/pop-linux-arm64 ./cmd/pop
 
-docker-build: ## Build Docker image tagged with git tag + commit id
-	$(DOCKER) build -t $(DOCKER_IMAGE_REF) .
+docker-build: ## Build Docker image tagged as vX.Y.Z-N-gXXXXXX
+	$(DOCKER) build --build-arg VERSION=$(DOCKER_VERSION) -t $(DOCKER_IMAGE_REF) .
 	@echo "Built image: $(DOCKER_IMAGE_REF)"
 
 run: ## Run POP with defaults/env/args
-	$(GO) run ./cmd/pop $(ARGS)
+	$(GO) run -ldflags "-X github.com/fanzy618/pop/internal/buildinfo.Version=$(GIT_DESCRIBE)" ./cmd/pop $(ARGS)
 
 run-bg: ## Run POP in background, write pid/log
 	@mkdir -p .tmp
-	@nohup $(GO) run ./cmd/pop $(ARGS) > .tmp/pop.log 2>&1 & echo $$! > .tmp/pop.pid
+	@nohup $(GO) run -ldflags "-X github.com/fanzy618/pop/internal/buildinfo.Version=$(GIT_DESCRIBE)" ./cmd/pop $(ARGS) > .tmp/pop.log 2>&1 & echo $$! > .tmp/pop.pid
 	@echo "POP started: pid=$$(cat .tmp/pop.pid), log=.tmp/pop.log"
 
 stop: ## Stop background POP started by run-bg

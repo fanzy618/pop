@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/fanzy618/pop/internal/buildinfo"
 	"github.com/fanzy618/pop/internal/config"
 	"github.com/fanzy618/pop/internal/proxy"
 	"github.com/fanzy618/pop/internal/rules"
@@ -75,6 +76,7 @@ func NewServer(cfg *config.Config, db *store.SQLite, proxyServer *proxy.Server, 
 	mux := http.NewServeMux()
 	mux.Handle("/assets/", http.StripPrefix("/assets/", http.FileServer(http.FS(assetsFS))))
 	mux.HandleFunc("/", s.handlePage)
+	mux.HandleFunc("/api/version", s.handleVersion)
 	mux.HandleFunc("/api/config", s.handleConfig)
 	mux.HandleFunc("/api/upstreams", s.handleUpstreams)
 	mux.HandleFunc("/api/upstreams/", s.handleUpstreamByID)
@@ -738,6 +740,17 @@ func cloneConfig(in *config.Config) *config.Config {
 	out := config.Default()
 	_ = json.Unmarshal(raw, out)
 	return out
+}
+
+func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]string{
+		"version": buildinfo.Version,
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

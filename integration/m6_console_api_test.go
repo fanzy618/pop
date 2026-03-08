@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fanzy618/pop/internal/buildinfo"
 	"github.com/fanzy618/pop/internal/config"
 	"github.com/fanzy618/pop/internal/console"
 	"github.com/fanzy618/pop/internal/proxy"
@@ -64,6 +65,93 @@ func TestConsoleIndexAndAssets(t *testing.T) {
 
 	if assetResp.StatusCode != http.StatusOK {
 		t.Fatalf("asset status=%d, want=%d", assetResp.StatusCode, http.StatusOK)
+	}
+}
+
+func TestConsoleVersion(t *testing.T) {
+	t.Parallel()
+
+	consoleURL, _, _, client := setupConsoleAndProxy(t)
+
+	resp, err := client.Get(consoleURL + "/api/version")
+	if err != nil {
+		t.Fatalf("GET version: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d, want=%d", resp.StatusCode, http.StatusOK)
+	}
+	if cacheControl := resp.Header.Get("Cache-Control"); !strings.Contains(cacheControl, "no-store") {
+		t.Fatalf("cache-control=%q, want contains no-store", cacheControl)
+	}
+
+	var payload map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode version payload: %v", err)
+	}
+	v, ok := payload["version"].(string)
+	if !ok {
+		t.Fatalf("version type=%T, want string", payload["version"])
+	}
+	if v != buildinfo.Version {
+		t.Fatalf("version=%q, want=%q", v, buildinfo.Version)
+	}
+}
+
+func TestConsoleHeaderIncludesVersionElement(t *testing.T) {
+	t.Parallel()
+
+	consoleURL, _, _, client := setupConsoleAndProxy(t)
+
+	respRoot, err := client.Get(consoleURL + "/")
+	if err != nil {
+		t.Fatalf("GET /: %v", err)
+	}
+	defer respRoot.Body.Close()
+	rootBody, err := io.ReadAll(respRoot.Body)
+	if err != nil {
+		t.Fatalf("read / body: %v", err)
+	}
+	if !strings.Contains(string(rootBody), `id="app-version"`) {
+		t.Fatalf("root page does not include app-version element")
+	}
+
+	respRules, err := client.Get(consoleURL + "/rules")
+	if err != nil {
+		t.Fatalf("GET /rules: %v", err)
+	}
+	defer respRules.Body.Close()
+	rulesBody, err := io.ReadAll(respRules.Body)
+	if err != nil {
+		t.Fatalf("read /rules body: %v", err)
+	}
+	if !strings.Contains(string(rulesBody), `id="app-version"`) {
+		t.Fatalf("rules page does not include app-version element")
+	}
+}
+
+func TestConsoleAssetsIncludeVersionFetch(t *testing.T) {
+	t.Parallel()
+
+	consoleURL, _, _, client := setupConsoleAndProxy(t)
+
+	resp, err := client.Get(consoleURL + "/assets/app.js")
+	if err != nil {
+		t.Fatalf("GET app.js: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read app.js: %v", err)
+	}
+	s := string(body)
+	if !strings.Contains(s, "/api/version") {
+		t.Fatalf("app.js does not include /api/version fetch")
+	}
+	if !strings.Contains(s, "visibilitychange") && !strings.Contains(s, "pageshow") && !strings.Contains(s, "focus") {
+		t.Fatalf("app.js does not include tab activation refetch hooks")
 	}
 }
 

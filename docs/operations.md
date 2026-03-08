@@ -5,7 +5,7 @@
 默认启动：
 
 ```bash
-go run ./cmd/pop
+make run
 ```
 
 默认监听：
@@ -14,6 +14,8 @@ go run ./cmd/pop
 - Console API：`127.0.0.1:5080`
 
 可通过环境变量或命令行覆盖，优先级：`CLI > ENV > 默认值`。
+
+如果需要让 web console 显示当前版本号，优先使用 `make run` 或 `make run-bg`，它们会自动注入 git 版本信息。
 
 ## 2. 配置覆盖
 

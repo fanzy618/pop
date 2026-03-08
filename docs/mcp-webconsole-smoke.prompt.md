@@ -8,9 +8,10 @@
 目标：验证 stats/activities/rules/upstreams 页面可用，且前后端联动正常。
 
 执行要求：
-1) 先用 Bash 启动 POP：go run ./cmd/pop
+1) 先用 Bash 启动 POP：make run-bg
    - 后台运行
    - 等待 http://127.0.0.1:5080/api/stats 可访问（HTTP 200）
+   - 访问页面后确认头部出现版本号（不是空白）
 2) 使用 chrome-devtools MCP 新开页面并访问：
    - http://127.0.0.1:5080/stats
    - http://127.0.0.1:5080/activities
@@ -21,6 +22,7 @@
    - activities: “实时活动”
    - rules: “规则管理”
    - upstreams: “上游管理”
+   - header: 显示版本号文本
 4) 通过 Bash 发送一条代理流量：
    - curl -x http://127.0.0.1:5128 http://example.com -I
    - 回到 stats 页面确认“总请求”增加
@@ -36,7 +38,7 @@
    - 删除该上游
    - 确认上游被移除
 7) 测试结束后清理：
-   - 停止本次启动的 POP 进程
+   - 执行 make stop 停止本次启动的 POP 进程
 
 输出要求：
 - 给出每一步是否通过（PASS/FAIL）

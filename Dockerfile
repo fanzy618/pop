@@ -4,6 +4,7 @@ FROM --platform=$BUILDPLATFORM ${GO_BUILDER_IMAGE} AS build
 
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
+ARG VERSION=unknown
 
 ENV GOTOOLCHAIN=local
 
@@ -16,7 +17,7 @@ COPY . .
 
 RUN --mount=type=cache,target=/root/.cache/go-build \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -buildvcs=false -ldflags "-s -w" -o /out/pop ./cmd/pop
+    go build -trimpath -buildvcs=false -ldflags "-s -w -X github.com/fanzy618/pop/internal/buildinfo.Version=$VERSION" -o /out/pop ./cmd/pop
 
 RUN mkdir -p /out/data && chown -R 65532:65532 /out/data
 
