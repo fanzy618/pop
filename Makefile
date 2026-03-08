@@ -5,11 +5,14 @@ MCP_PROMPT ?= docs/mcp-webconsole-smoke.prompt.md
 
 DOCKER ?= docker
 DOCKER_IMAGE ?= pop
+DOCKER_PUSH_IMAGE ?= pi.fanzy.cc/pop
 GIT_DESCRIBE ?= $(shell git describe --tags --long --abbrev=6 2>/dev/null || echo unknown)
 DOCKER_VERSION ?= $(GIT_DESCRIBE)
 DOCKER_IMAGE_REF ?= $(DOCKER_IMAGE):$(DOCKER_VERSION)
+DOCKER_PUSH_IMAGE_REF ?= $(DOCKER_PUSH_IMAGE):$(DOCKER_VERSION)
+DOCKER_PUSH_IMAGE_LATEST ?= $(DOCKER_PUSH_IMAGE):latest
 
-.PHONY: help build build-linux-arm64 docker-build run run-bg stop test test-console test-integration fmt vet tidy lint clean mcp-smoke mcp-smoke-path
+.PHONY: help build build-linux-arm64 docker-build docker-build-push-arm64 run run-bg stop test test-console test-integration fmt vet tidy lint clean mcp-smoke mcp-smoke-path
 
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*## "; printf "\nUsage:\n  make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_.-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -25,6 +28,12 @@ build-linux-arm64: ## Build Linux ARM64 binary to ./bin/pop-linux-arm64
 docker-build: ## Build Docker image tagged as vX.Y.Z-N-gXXXXXX
 	$(DOCKER) build --build-arg VERSION=$(DOCKER_VERSION) -t $(DOCKER_IMAGE_REF) .
 	@echo "Built image: $(DOCKER_IMAGE_REF)"
+
+docker-build-push-arm64: ## Build and push linux/arm64 image to pi.fanzy.cc/pop with version tag and latest
+	$(DOCKER) buildx build --platform linux/arm64 --build-arg TARGETOS=linux --build-arg TARGETARCH=arm64 --build-arg VERSION=$(DOCKER_VERSION) -t $(DOCKER_PUSH_IMAGE_REF) --push .
+	$(DOCKER) buildx imagetools create -t $(DOCKER_PUSH_IMAGE_LATEST) $(DOCKER_PUSH_IMAGE_REF)
+	@echo "Pushed image: $(DOCKER_PUSH_IMAGE_REF)"
+	@echo "Updated tag: $(DOCKER_PUSH_IMAGE_LATEST)"
 
 run: ## Run POP with defaults/env/args
 	$(GO) run -ldflags "-X github.com/fanzy618/pop/internal/buildinfo.Version=$(GIT_DESCRIBE)" ./cmd/pop $(ARGS)
