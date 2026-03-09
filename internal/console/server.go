@@ -41,6 +41,14 @@ type Server struct {
 	mux http.Handler
 }
 
+type rulesListResponse struct {
+	Items    []config.RuleConfig `json:"items"`
+	Total    int                 `json:"total"`
+	Page     int                 `json:"page"`
+	PageSize int                 `json:"page_size"`
+	Keyword  string              `json:"keyword,omitempty"`
+}
+
 func NewServer(cfg *config.Config, db *store.SQLite, proxyServer *proxy.Server, telemetryStore *telemetry.Store) (*Server, error) {
 	if cfg == nil {
 		cfg = config.Default()
@@ -264,12 +272,41 @@ func (s *Server) handleUpstreamByID(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		items, err := s.db.ListRules()
+		page := parsePositiveIntDefault(r.URL.Query().Get("page"), 1)
+		pageSize := parsePositiveIntDefault(r.URL.Query().Get("page_size"), 20)
+		if pageSize > 100 {
+			pageSize = 100
+		}
+		keyword := strings.TrimSpace(r.URL.Query().Get("keyword"))
+		result, err := s.db.ListRulesPage(store.RuleListOptions{
+			Keyword: keyword,
+			Limit:   pageSize,
+			Offset:  (page - 1) * pageSize,
+		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		writeJSON(w, http.StatusOK, items)
+		pageCount := max(1, (result.Total+pageSize-1)/pageSize)
+		if page > pageCount {
+			page = pageCount
+			result, err = s.db.ListRulesPage(store.RuleListOptions{
+				Keyword: keyword,
+				Limit:   pageSize,
+				Offset:  (page - 1) * pageSize,
+			})
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+		}
+		writeJSON(w, http.StatusOK, rulesListResponse{
+			Items:    result.Items,
+			Total:    result.Total,
+			Page:     page,
+			PageSize: pageSize,
+			Keyword:  keyword,
+		})
 	case http.MethodPost:
 		var rule config.RuleConfig
 		if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
@@ -301,6 +338,14 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func parsePositiveIntDefault(raw string, fallback int) int {
+	v, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || v <= 0 {
+		return fallback
+	}
+	return v
 }
 
 func (s *Server) handleRuleByID(w http.ResponseWriter, r *http.Request) {

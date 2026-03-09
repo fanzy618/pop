@@ -24,6 +24,17 @@ type BackupPayload struct {
 	Rules             []config.RuleConfig     `json:"rules"`
 }
 
+type RuleListOptions struct {
+	Keyword string
+	Limit   int
+	Offset  int
+}
+
+type RuleListPage struct {
+	Items []config.RuleConfig
+	Total int
+}
+
 type SQLite struct {
 	db *sql.DB
 }
@@ -365,9 +376,38 @@ func (s *SQLite) DeleteUpstream(id int64) error {
 }
 
 func (s *SQLite) ListRules() ([]config.RuleConfig, error) {
-	rows, err := s.db.Query(`SELECT id, enabled, pattern, action, upstream_ref, block_status, created_at FROM rules ORDER BY created_at DESC, id DESC`)
+	page, err := s.ListRulesPage(RuleListOptions{})
 	if err != nil {
-		return nil, fmt.Errorf("query rules: %w", err)
+		return nil, err
+	}
+	return page.Items, nil
+}
+
+func (s *SQLite) ListRulesPage(opts RuleListOptions) (RuleListPage, error) {
+	keyword := strings.TrimSpace(strings.ToLower(opts.Keyword))
+	where := ""
+	args := make([]any, 0, 3)
+	if keyword != "" {
+		where = ` WHERE lower(pattern) LIKE ?`
+		args = append(args, "%"+keyword+"%")
+	}
+
+	var total int
+	countQuery := `SELECT COUNT(*) FROM rules` + where
+	if err := s.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return RuleListPage{}, fmt.Errorf("count rules: %w", err)
+	}
+
+	queryArgs := append([]any{}, args...)
+	query := `SELECT id, enabled, pattern, action, upstream_ref, block_status, created_at FROM rules` + where + ` ORDER BY created_at DESC, id DESC`
+	if opts.Limit > 0 {
+		query += ` LIMIT ? OFFSET ?`
+		queryArgs = append(queryArgs, opts.Limit, max(opts.Offset, 0))
+	}
+
+	rows, err := s.db.Query(query, queryArgs...)
+	if err != nil {
+		return RuleListPage{}, fmt.Errorf("query rules: %w", err)
 	}
 	defer rows.Close()
 
@@ -378,7 +418,7 @@ func (s *SQLite) ListRules() ([]config.RuleConfig, error) {
 		var upstreamID sql.NullInt64
 		var blockStatus sql.NullInt64
 		if err := rows.Scan(&item.ID, &enabled, &item.Pattern, &item.Action, &upstreamID, &blockStatus, &item.CreatedAt); err != nil {
-			return nil, fmt.Errorf("scan rule: %w", err)
+			return RuleListPage{}, fmt.Errorf("scan rule: %w", err)
 		}
 		item.Enabled = enabled != 0
 		if upstreamID.Valid {
@@ -393,9 +433,9 @@ func (s *SQLite) ListRules() ([]config.RuleConfig, error) {
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate rules: %w", err)
+		return RuleListPage{}, fmt.Errorf("iterate rules: %w", err)
 	}
-	return items, nil
+	return RuleListPage{Items: items, Total: total}, nil
 }
 
 func (s *SQLite) CreateRule(item *config.RuleConfig) error {

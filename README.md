@@ -78,7 +78,7 @@ POP_PROXY_LISTEN=127.0.0.1:18080 make run ARGS="--console-listen 127.0.0.1:19090
 - `POST /api/upstreams`
 - `PUT /api/upstreams/:id`
 - `DELETE /api/upstreams/:id`
-- `GET /api/rules`
+- `GET /api/rules?page=1&page_size=20&keyword=ads`
 - `POST /api/rules`
 - `PUT /api/rules/:id`
 - `DELETE /api/rules/:id`
@@ -93,6 +93,7 @@ POP_PROXY_LISTEN=127.0.0.1:18080 make run ARGS="--console-listen 127.0.0.1:19090
 
 Notes:
 
+- `GET /api/rules` returns `{items,total,page,page_size,keyword}` and supports keyword search on `pattern`.
 - Backup payload includes `data_format_version`; restore requires compatible version.
 - ABP import skips comments, exception rules (`@@`), and element hiding rules.
 

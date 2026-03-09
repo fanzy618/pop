@@ -148,6 +148,27 @@ th {
   margin-bottom: 12px;
 }
 
+.rules-toolbar,
+.pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.rules-toolbar {
+  margin-bottom: 12px;
+}
+
+.pager {
+  margin-top: 12px;
+}
+
+#rule-search {
+  min-width: min(320px, 100%);
+}
+
 input,
 select,
 button {

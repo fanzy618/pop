@@ -12,11 +12,21 @@ const statsEls = {
 const activityBody = document.getElementById("activity-body");
 const rulesBody = document.getElementById("rules-body");
 const upstreamsBody = document.getElementById("upstreams-body");
+const ruleSearchInput = document.getElementById("rule-search");
+const rulesSummaryEl = document.getElementById("rules-summary");
+const rulesPageInfoEl = document.getElementById("rules-page-info");
+const rulesPrevPageBtn = document.getElementById("rules-prev-page");
+const rulesNextPageBtn = document.getElementById("rules-next-page");
 
 let rulesCache = [];
 let upstreamsCache = [];
 let editingRuleID = 0;
 let editingUpstreamID = 0;
+let rulesPage = 1;
+let rulesTotal = 0;
+let rulesKeyword = "";
+
+const RULES_PAGE_SIZE = 20;
 
 function showMsg(text, isError = false) {
   if (!msgEl) return;
@@ -278,6 +288,39 @@ function renderRules() {
     `;
     rulesBody.appendChild(tr);
   });
+  renderRulesPager();
+}
+
+function getRuleSearchKeyword() {
+  return String(ruleSearchInput?.value || "").trim();
+}
+
+function getRulesPageCount(total) {
+  return Math.max(1, Math.ceil(total / RULES_PAGE_SIZE));
+}
+
+function clampRulesPage(total = rulesTotal) {
+  const pageCount = getRulesPageCount(total);
+  if (rulesPage > pageCount) rulesPage = pageCount;
+  if (rulesPage < 1) rulesPage = 1;
+  return pageCount;
+}
+
+function renderRulesPager() {
+  const pageCount = clampRulesPage();
+
+  if (rulesSummaryEl) {
+    rulesSummaryEl.textContent = rulesKeyword ? `关键词“${rulesKeyword}”匹配 ${rulesTotal} 条` : `共 ${rulesTotal} 条`;
+  }
+  if (rulesPageInfoEl) {
+    rulesPageInfoEl.textContent = `第 ${rulesPage} / ${pageCount} 页`;
+  }
+  if (rulesPrevPageBtn) {
+    rulesPrevPageBtn.disabled = rulesPage <= 1;
+  }
+  if (rulesNextPageBtn) {
+    rulesNextPageBtn.disabled = rulesPage >= pageCount;
+  }
 }
 
 function highlightRuleByID(ruleID) {
@@ -327,8 +370,20 @@ async function loadActivities() {
 }
 
 async function loadRules() {
-  const items = await api("/api/rules");
-  rulesCache = Array.isArray(items) ? items : [];
+  clampRulesPage();
+  const params = new URLSearchParams();
+  params.set("page", String(rulesPage));
+  params.set("page_size", String(RULES_PAGE_SIZE));
+  const keyword = getRuleSearchKeyword();
+  if (keyword) {
+    params.set("keyword", keyword);
+  }
+  const data = await api(`/api/rules?${params.toString()}`);
+  rulesCache = Array.isArray(data?.items) ? data.items : [];
+  rulesTotal = Number(data?.total || 0);
+  rulesPage = Number(data?.page || rulesPage);
+  rulesKeyword = String(data?.keyword || "");
+  clampRulesPage();
   renderRules();
 }
 
@@ -437,6 +492,30 @@ function bindRulesEvents() {
       showMsg(`规则操作失败: ${err.message}`, true);
     }
   });
+
+  if (ruleSearchInput) {
+    ruleSearchInput.addEventListener("input", () => {
+      rulesPage = 1;
+      loadRules().catch((err) => showMsg(`规则加载失败: ${err.message}`, true));
+    });
+  }
+
+  if (rulesPrevPageBtn) {
+    rulesPrevPageBtn.addEventListener("click", () => {
+      if (rulesPage <= 1) return;
+      rulesPage -= 1;
+      loadRules().catch((err) => showMsg(`规则加载失败: ${err.message}`, true));
+    });
+  }
+
+  if (rulesNextPageBtn) {
+    rulesNextPageBtn.addEventListener("click", () => {
+      const pageCount = getRulesPageCount(rulesTotal);
+      if (rulesPage >= pageCount) return;
+      rulesPage += 1;
+      loadRules().catch((err) => showMsg(`规则加载失败: ${err.message}`, true));
+    });
+  }
 
   resetRuleForm();
 }

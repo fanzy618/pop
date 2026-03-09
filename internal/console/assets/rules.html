@@ -33,6 +33,10 @@
         <button type="submit">新增规则</button>
         <button id="rule-cancel" type="button" class="secondary hidden">取消编辑</button>
       </form>
+      <div class="rules-toolbar">
+        <input id="rule-search" type="search" placeholder="搜索规则关键词">
+        <span id="rules-summary" class="hint">共 0 条</span>
+      </div>
       <div class="table-wrap">
         <table>
           <thead>
@@ -47,6 +51,11 @@
           </thead>
           <tbody id="rules-body"></tbody>
         </table>
+      </div>
+      <div class="pager">
+        <button id="rules-prev-page" type="button" class="secondary">上一页</button>
+        <span id="rules-page-info" class="hint">第 1 / 1 页</span>
+        <button id="rules-next-page" type="button" class="secondary">下一页</button>
       </div>
     </section>
 
