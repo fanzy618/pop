@@ -11,7 +11,7 @@
 - Default action for unmatched traffic: `DIRECT`.
 - Upstream proxy support in MVP: HTTP proxy only.
 - Block default status code: `404`.
-- Rule matching semantics: first-match-wins by explicit order.
+- Rule matching semantics: a rule matches its domain and subdomains; the longest matching pattern wins.
 
 ## Required behavior
 
@@ -27,7 +27,7 @@
 ## Rule model
 
 - Rule fields include: enabled flag, order, domain pattern, action, optional upstream id, optional block status.
-- Domain patterns must support exact domains, wildcard subdomains (`*.example.com`), and simple wildcard host patterns (`*ads*`).
+- Domain patterns are domain suffix rules such as `example.com`, which match the root domain and all subdomains; legacy `*.example.com` is treated compatibly.
 
 ## Runtime data constraints
 

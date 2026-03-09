@@ -31,7 +31,7 @@ POP（Proxy of Proxy）是一个面向个人用户的本地 HTTP 代理服务。
 ### 3.2 路由决策
 
 - 按域名规则进行匹配。
-- 规则按顺序生效（first match wins）。
+- 规则匹配域名及其所有子域名，多条命中时最长 pattern 生效。
 - 动作类型：
   - `DIRECT`
   - `PROXY(upstream_id)`
@@ -42,10 +42,7 @@ POP（Proxy of Proxy）是一个面向个人用户的本地 HTTP 代理服务。
 
 - 规则支持启用/禁用。
 - 规则支持顺序调整。
-- 域名模式支持：
-  - 精确匹配：`example.com`
-  - 子域通配：`*.example.com`
-  - 主机名通配：`*ads*`
+- 域名模式支持根域规则，例如 `example.com` 同时覆盖 `example.com` 与其所有子域名。
 
 ### 3.4 上游代理
 

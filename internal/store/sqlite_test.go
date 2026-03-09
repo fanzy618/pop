@@ -15,7 +15,7 @@ func seedBackupData(t *testing.T, db *SQLite) {
 	if err := db.CreateUpstream(&up); err != nil {
 		t.Fatalf("create upstream: %v", err)
 	}
-	r := config.RuleConfig{Enabled: true, Pattern: "*.backup.local", Action: rules.ActionProxy, UpstreamID: up.ID}
+	r := config.RuleConfig{Enabled: true, Pattern: "backup.local", Action: rules.ActionProxy, UpstreamID: up.ID}
 	if err := db.CreateRule(&r); err != nil {
 		t.Fatalf("create rule: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestDeleteUpstreamBlockedByRuleReference(t *testing.T) {
 	if len(upstreams) != 1 {
 		t.Fatalf("upstreams length=%d, want=1", len(upstreams))
 	}
-	rule := config.RuleConfig{Enabled: true, Pattern: "*.example.com", Action: rules.ActionProxy, UpstreamID: upstreams[0].ID}
+	rule := config.RuleConfig{Enabled: true, Pattern: "example.com", Action: rules.ActionProxy, UpstreamID: upstreams[0].ID}
 	if err := db.CreateRule(&rule); err != nil {
 		t.Fatalf("create rule: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestExportRestoreBackupRoundTrip(t *testing.T) {
 	if len(upstreams) != 1 || len(rulesList) != 1 {
 		t.Fatalf("unexpected restore sizes: upstreams=%d rules=%d", len(upstreams), len(rulesList))
 	}
-	if rulesList[0].Pattern != "*.backup.local" {
+	if rulesList[0].Pattern != "backup.local" {
 		t.Fatalf("restored pattern=%s", rulesList[0].Pattern)
 	}
 }

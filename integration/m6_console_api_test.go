@@ -169,7 +169,7 @@ func TestConsoleRulesCRUDAndReorder(t *testing.T) {
 	consoleURL, _, dbPath, client := setupConsoleAndProxy(t)
 
 	rule1 := map[string]any{"enabled": true, "pattern": "alpha.test", "action": "DIRECT"}
-	rule2 := map[string]any{"enabled": true, "pattern": "*ads*", "action": "BLOCK", "block_status": 410}
+	rule2 := map[string]any{"enabled": true, "pattern": "ads.test", "action": "BLOCK", "block_status": 410}
 
 	postJSON(t, client, consoleURL+"/api/rules", rule1, http.StatusCreated)
 	postJSON(t, client, consoleURL+"/api/rules", rule2, http.StatusCreated)
@@ -589,8 +589,8 @@ func TestConsoleImportABP(t *testing.T) {
 		t.Fatalf("decode rules: %v", err)
 	}
 	rulesList := rulesPayload.Items
-	if len(rulesList) != 6 {
-		t.Fatalf("rules length=%d, want=6", len(rulesList))
+	if len(rulesList) != 3 {
+		t.Fatalf("rules length=%d, want=3", len(rulesList))
 	}
 	contains := func(pattern string) bool {
 		for _, r := range rulesList {
@@ -600,16 +600,16 @@ func TestConsoleImportABP(t *testing.T) {
 		}
 		return false
 	}
-	if !contains("ads.example.com") || !contains("*.ads.example.com") {
+	if !contains("ads.example.com") {
 		t.Fatalf("expected ads.example.com patterns in imported rules")
 	}
-	if !contains("example.org") || !contains("*.example.org") {
+	if !contains("example.org") {
 		t.Fatalf("expected example.org patterns in imported rules")
 	}
-	if !contains("sub.example.net") || !contains("*.sub.example.net") {
+	if !contains("sub.example.net") {
 		t.Fatalf("expected sub.example.net patterns in imported rules")
 	}
-	if contains("allow.example.com") || contains("*.allow.example.com") {
+	if contains("allow.example.com") {
 		t.Fatalf("exception rule should be skipped")
 	}
 }

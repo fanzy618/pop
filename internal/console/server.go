@@ -511,33 +511,28 @@ func (s *Server) handleDataImportABP(w http.ResponseWriter, r *http.Request) {
 	skippedExisting := 0
 	batchSeen := make(map[string]struct{})
 	for _, domain := range domains {
-		patterns := []string{domain}
-		if strings.Contains(domain, ".") {
-			patterns = append(patterns, "*."+domain)
+		pattern := domain
+		normPattern := strings.TrimSuffix(strings.TrimPrefix(strings.ToLower(strings.TrimSpace(pattern)), "*."), ".")
+		if _, ok := batchSeen[normPattern]; ok {
+			skippedExisting++
+			continue
 		}
-		for _, pattern := range patterns {
-			normPattern := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(pattern)), ".")
-			if _, ok := batchSeen[normPattern]; ok {
-				skippedExisting++
-				continue
-			}
-			batchSeen[normPattern] = struct{}{}
-			rule := config.RuleConfig{
-				Enabled:    enabled,
-				Pattern:    pattern,
-				Action:     action,
-				UpstreamID: upstreamID,
-			}
-			if err := s.db.CreateRule(&rule); err != nil {
-				if isForeignKeyConstraint(err) {
-					http.Error(w, "unknown upstream_id", http.StatusBadRequest)
-					return
-				}
-				http.Error(w, err.Error(), http.StatusBadRequest)
+		batchSeen[normPattern] = struct{}{}
+		rule := config.RuleConfig{
+			Enabled:    enabled,
+			Pattern:    pattern,
+			Action:     action,
+			UpstreamID: upstreamID,
+		}
+		if err := s.db.CreateRule(&rule); err != nil {
+			if isForeignKeyConstraint(err) {
+				http.Error(w, "unknown upstream_id", http.StatusBadRequest)
 				return
 			}
-			created++
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
 		}
+		created++
 	}
 
 	if err := s.rebuildRuntime(); err != nil {

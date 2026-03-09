@@ -42,7 +42,10 @@ func NewMatcher(rules []Rule, defaultDecision Decision) *Matcher {
 
 func (m *Matcher) Decide(rawHost string) Decision {
 	host := normalizePattern(rawHost)
-	for _, rule := range m.rules {
+	bestLen := -1
+	bestOrder := len(m.rules)
+	var best Decision
+	for i, rule := range m.rules {
 		if !rule.Enabled {
 			continue
 		}
@@ -51,6 +54,10 @@ func (m *Matcher) Decide(rawHost string) Decision {
 			continue
 		}
 		if matchPattern(host, pattern) {
+			patternLen := len(strings.TrimPrefix(pattern, "*."))
+			if patternLen < bestLen || (patternLen == bestLen && i > bestOrder) {
+				continue
+			}
 			decision := Decision{
 				Action:      rule.Action,
 				RuleID:      rule.ID,
@@ -64,73 +71,24 @@ func (m *Matcher) Decide(rawHost string) Decision {
 			if decision.Action == "" {
 				decision.Action = ActionDirect
 			}
-			return decision
+			best = decision
+			bestLen = patternLen
+			bestOrder = i
 		}
 	}
 
+	if bestLen >= 0 {
+		return best
+	}
 	return m.defaultDecision
 }
 
 func matchPattern(host, pattern string) bool {
-	if pattern == "*" {
-		return true
+	pattern = strings.TrimPrefix(pattern, "*.")
+	if pattern == "" || strings.Contains(pattern, "*") {
+		return false
 	}
-
-	if strings.HasPrefix(pattern, "*.") {
-		suffix := strings.TrimPrefix(pattern, "*.")
-		if suffix == "" || host == suffix {
-			return false
-		}
-		return strings.HasSuffix(host, "."+suffix)
-	}
-
-	if strings.Contains(pattern, "*") {
-		return wildcardContainsMatch(host, pattern)
-	}
-
-	return host == pattern
-}
-
-func wildcardContainsMatch(host, pattern string) bool {
-	parts := strings.Split(pattern, "*")
-	if len(parts) == 1 {
-		return host == pattern
-	}
-
-	idx := 0
-	if !strings.HasPrefix(pattern, "*") {
-		prefix := parts[0]
-		if !strings.HasPrefix(host, prefix) {
-			return false
-		}
-		idx = len(prefix)
-		parts = parts[1:]
-	}
-
-	for i, part := range parts {
-		if part == "" {
-			continue
-		}
-		found := strings.Index(host[idx:], part)
-		if found == -1 {
-			return false
-		}
-		idx += found + len(part)
-
-		if i == len(parts)-1 && !strings.HasSuffix(pattern, "*") {
-			return idx == len(host)
-		}
-	}
-
-	if !strings.HasSuffix(pattern, "*") {
-		last := parts[len(parts)-1]
-		if last == "" {
-			return true
-		}
-		return strings.HasSuffix(host, last)
-	}
-
-	return true
+	return host == pattern || strings.HasSuffix(host, "."+pattern)
 }
 
 func normalizePattern(v string) string {

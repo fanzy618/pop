@@ -14,27 +14,19 @@
 ## 2. 匹配语义
 
 - 匹配输入是归一化后的 host。
-- 规则按创建时间倒序匹配（新建规则优先）。
-- 第一条命中规则立即生效（first match wins）。
+- 规则会匹配自身域名以及其所有子域名。
+- 多条规则同时命中时，pattern 更长的规则优先。
+- 若长度相同，则保持现有顺序，较新的规则优先。
 - 未命中任何规则时走默认动作（当前默认 `DIRECT`）。
 
 ## 3. pattern 支持
 
-### 3.1 精确匹配
+### 3.1 域名后缀匹配
 
 - 示例：`example.com`
-- 仅匹配 `example.com`。
-
-### 3.2 子域通配
-
-- 示例：`*.example.com`
-- 匹配 `a.example.com`、`b.c.example.com`。
-- 不匹配根域 `example.com`。
-
-### 3.3 主机名通配
-
-- 示例：`*ads*`
-- 匹配包含 `ads` 子串的 host，例如 `myadsdomain.net`。
+- 匹配 `example.com`、`a.example.com`、`b.c.example.com`。
+- 不匹配 `abc-example.com` 这类仅包含相似后缀但不在 label 边界上的域名。
+- 历史规则 `*.example.com` 会按 `example.com` 兼容处理。
 
 ## 4. 动作语义
 
@@ -53,13 +45,13 @@
 
 ## 6. 常见配置建议
 
-- 将明确的内网规则放前面（如 `*.corp.local -> DIRECT`）。
-- 将广告/拦截规则放在中前段（如 `*ads* -> BLOCK`）。
+- 将明确的内网规则写成根域（如 `corp.local -> DIRECT`）。
+- 将更具体的域名规则写得更长（如 `abc.example.com -> DIRECT` 覆盖 `example.com -> PROXY`）。
 - 将区域性外网规则按优先级分配到不同上游（A/B）。
 - 最后依赖默认策略处理未覆盖域名。
 
 ## 7. 常见误配置
 
 - `PROXY` 规则缺失 `upstream_id`：会导致请求失败。
-- `*.example.com` 误以为可匹配 `example.com`：实际不会匹配。
-- 顺序不当：新建规则优先命中，可能导致旧规则不再生效。
+- `*ads*` 这类包含匹配不再生效，应改成明确域名规则。
+- 误以为较短规则会覆盖更具体规则：实际由更长 pattern 优先生效。

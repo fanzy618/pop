@@ -22,9 +22,9 @@
   <main class="layout">
     <section class="card">
       <h2>规则管理</h2>
-      <p class="hint">规则按创建时间倒序匹配，新建规则优先命中。</p>
+      <p class="hint">规则会匹配域名及其所有子域名；多个规则同时命中时，模式更长的优先生效。</p>
       <form id="rule-form" class="form-inline">
-        <input name="pattern" placeholder="域名模式，如 *.example.com" required>
+        <input name="pattern" placeholder="域名模式，如 example.com" required>
         <select name="route_target" required>
           <option value="DIRECT">直连 (DIRECT)</option>
           <option value="BLOCK">阻断 (BLOCK 404)</option>

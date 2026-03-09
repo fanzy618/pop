@@ -9,7 +9,7 @@ POP is a local HTTP proxy with a web console for domain-based routing.
   - `DIRECT`
   - `PROXY` (via selected upstream)
   - `BLOCK` (web console behavior fixed to `404`)
-- Rules are matched by newest first (`created_at` desc)
+- Rules match the configured domain and all its subdomains; if multiple rules match, the longest pattern wins
 - Creating a rule with the same domain pattern overrides the existing rule and refreshes its `created_at`
 - Live telemetry: in-flight, totals, bandwidth, activities, SSE stream
 - Web console pages:

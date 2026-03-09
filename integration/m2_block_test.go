@@ -14,7 +14,7 @@ func TestRuleBlockStatusCode(t *testing.T) {
 	t.Parallel()
 
 	matcher := rules.NewMatcher([]rules.Rule{
-		{ID: "block-ads", Enabled: true, Pattern: "*ads*", Action: rules.ActionBlock, BlockStatus: http.StatusGone},
+		{ID: "block-ads", Enabled: true, Pattern: "ads-example.local", Action: rules.ActionBlock, BlockStatus: http.StatusGone},
 	}, rules.Decision{Action: rules.ActionDirect})
 
 	proxyServer := httptest.NewServer(proxy.NewServerWithMatcher(matcher))

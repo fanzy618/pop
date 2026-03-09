@@ -28,7 +28,7 @@ func TestConfigPersistsAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	rule := config.RuleConfig{Enabled: true, Pattern: "*ads*", Action: rules.ActionBlock, BlockStatus: http.StatusGone}
+	rule := config.RuleConfig{Enabled: true, Pattern: "ads-pop.test", Action: rules.ActionBlock, BlockStatus: http.StatusGone}
 	if err := db.CreateRule(&rule); err != nil {
 		t.Fatalf("create rule: %v", err)
 	}
