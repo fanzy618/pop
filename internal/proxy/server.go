@@ -87,6 +87,12 @@ func (s *Server) SetMatcher(matcher *rules.Matcher) {
 	s.matcher = matcher
 }
 
+func (s *Server) GetMatcher() *rules.Matcher {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.matcher
+}
+
 func (s *Server) decide(host string) rules.Decision {
 	s.mu.RLock()
 	matcher := s.matcher

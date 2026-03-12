@@ -97,9 +97,40 @@ func NewServer(cfg *config.Config, db *store.SQLite, proxyServer *proxy.Server, 
 	mux.HandleFunc("/api/stats", s.handleStats)
 	mux.HandleFunc("/api/activities", s.handleActivities)
 	mux.HandleFunc("/api/activities/stream", s.handleActivitiesStream)
+	mux.HandleFunc("/proxy.pac", s.handlePAC)
 
 	s.mux = mux
 	return s, nil
+}
+
+func (s *Server) handlePAC(w http.ResponseWriter, r *http.Request) {
+	matcher := s.proxy.GetMatcher()
+	if matcher == nil {
+		http.Error(w, "matcher not available", http.StatusInternalServerError)
+		return
+	}
+
+	s.mu.RLock()
+	proxyListen := s.cfg.ProxyListen
+	s.mu.RUnlock()
+
+	host, _, _ := net.SplitHostPort(r.Host)
+	if host == "" {
+		host = r.Host
+	}
+
+	_, port, _ := net.SplitHostPort(proxyListen)
+	if port == "" {
+		port = "5128"
+	}
+
+	proxyAddr := net.JoinHostPort(host, port)
+
+	pac := matcher.GeneratePAC(proxyAddr)
+	w.Header().Set("Content-Type", "application/x-ns-proxy-autoconfig")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(pac))
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
