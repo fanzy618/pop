@@ -44,7 +44,45 @@ func NewMatcher(rules []Rule, defaultDecision Decision) *Matcher {
 }
 
 func (m *Matcher) Decide(rawHost string) Decision {
-	// ... (existing code)
+	host := normalizePattern(rawHost)
+	bestLen := -1
+	bestOrder := len(m.rules)
+	var best Decision
+	for i, rule := range m.rules {
+		if !rule.Enabled {
+			continue
+		}
+		pattern := normalizePattern(rule.Pattern)
+		if pattern == "" {
+			continue
+		}
+		if matchPattern(host, pattern) {
+			patternLen := len(strings.TrimPrefix(pattern, "*."))
+			if patternLen < bestLen || (patternLen == bestLen && i > bestOrder) {
+				continue
+			}
+			decision := Decision{
+				Action:      rule.Action,
+				RuleID:      rule.ID,
+				UpstreamID:  rule.UpstreamID,
+				BlockStatus: rule.BlockStatus,
+				Matched:     true,
+			}
+			if decision.Action == ActionBlock && decision.BlockStatus == 0 {
+				decision.BlockStatus = 404
+			}
+			if decision.Action == "" {
+				decision.Action = ActionDirect
+			}
+			best = decision
+			bestLen = patternLen
+			bestOrder = i
+		}
+	}
+
+	if bestLen >= 0 {
+		return best
+	}
 	return m.defaultDecision
 }
 
