@@ -67,7 +67,7 @@ func TestPACGeneration(t *testing.T) {
 	// 3. Verify content
 	expectations := []string{
 		"function FindProxyForURL(url, host)",
-		"if (host === \"google.com\" || host.endsWith(\".google.com\")) return \"PROXY",
+		"if (host === \"google.com\" || host.endsWith(\".google.com\")) return \"PROXY upstream:8080\"",
 		"if (host === \"local.dev\" || host.endsWith(\".local.dev\")) return \"DIRECT\"",
 		"if (host === \"ads.com\" || host.endsWith(\".ads.com\")) return \"PROXY 127.0.0.1:65535\"",
 	}

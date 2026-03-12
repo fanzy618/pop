@@ -48,7 +48,7 @@ func (m *Matcher) Decide(rawHost string) Decision {
 	return m.defaultDecision
 }
 
-func (m *Matcher) GeneratePAC(proxyAddr string) string {
+func (m *Matcher) GeneratePAC(proxyAddr string, upstreamMap map[string]string) string {
 	var b strings.Builder
 	b.WriteString("function FindProxyForURL(url, host) {\n")
 	b.WriteString("  host = host.toLowerCase();\n")
@@ -65,7 +65,11 @@ func (m *Matcher) GeneratePAC(proxyAddr string) string {
 		result := "DIRECT"
 		switch rule.Action {
 		case ActionProxy:
-			result = "PROXY " + proxyAddr
+			if addr, ok := upstreamMap[rule.UpstreamID]; ok && addr != "" {
+				result = "PROXY " + addr
+			} else {
+				result = "PROXY " + proxyAddr
+			}
 		case ActionBlock:
 			result = "PROXY 127.0.0.1:65535"
 		case ActionDirect:
@@ -79,7 +83,11 @@ func (m *Matcher) GeneratePAC(proxyAddr string) string {
 	defaultResult := "DIRECT"
 	switch m.defaultDecision.Action {
 	case ActionProxy:
-		defaultResult = "PROXY " + proxyAddr
+		if addr, ok := upstreamMap[m.defaultDecision.UpstreamID]; ok && addr != "" {
+			defaultResult = "PROXY " + addr
+		} else {
+			defaultResult = "PROXY " + proxyAddr
+		}
 	case ActionBlock:
 		defaultResult = "PROXY 127.0.0.1:65535"
 	}

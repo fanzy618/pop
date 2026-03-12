@@ -126,7 +126,16 @@ func (s *Server) handlePAC(w http.ResponseWriter, r *http.Request) {
 
 	proxyAddr := net.JoinHostPort(host, port)
 
-	pac := matcher.GeneratePAC(proxyAddr)
+	upstreamMap := make(map[string]string)
+	if mgr := s.proxy.GetUpstreams(); mgr != nil {
+		for id, target := range mgr.All() {
+			if target.URL != nil {
+				upstreamMap[id] = target.URL.Host
+			}
+		}
+	}
+
+	pac := matcher.GeneratePAC(proxyAddr, upstreamMap)
 	w.Header().Set("Content-Type", "application/x-ns-proxy-autoconfig")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)

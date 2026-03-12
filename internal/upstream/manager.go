@@ -90,3 +90,13 @@ func (m *Manager) Get(id string) (*Target, bool) {
 	target, ok := m.targets[id]
 	return target, ok
 }
+
+func (m *Manager) All() map[string]*Target {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	res := make(map[string]*Target, len(m.targets))
+	for k, v := range m.targets {
+		res[k] = v
+	}
+	return res
+}

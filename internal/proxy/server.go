@@ -115,6 +115,12 @@ func (s *Server) SetUpstreams(manager *upstream.Manager) {
 	s.upstreams = manager
 }
 
+func (s *Server) GetUpstreams() *upstream.Manager {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.upstreams
+}
+
 func (s *Server) getUpstream(id string) (*upstream.Target, bool) {
 	s.mu.RLock()
 	m := s.upstreams
