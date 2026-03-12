@@ -15,6 +15,7 @@ type Config struct {
 	ProxyListen   string       `json:"proxy_listen"`
 	ConsoleListen string       `json:"console_listen"`
 	SQLitePath    string       `json:"sqlite_path,omitempty"`
+	PACProxyAddr  string       `json:"pac_proxy_addr,omitempty"`
 	DefaultAction rules.Action `json:"default_action"`
 }
 

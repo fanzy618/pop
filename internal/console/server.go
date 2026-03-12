@@ -112,30 +112,27 @@ func (s *Server) handlePAC(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.RLock()
 	proxyListen := s.cfg.ProxyListen
+	pacOverride := s.cfg.PACProxyAddr
 	s.mu.RUnlock()
 
-	host, _, _ := net.SplitHostPort(r.Host)
-	if host == "" {
-		host = r.Host
-	}
-
-	_, port, _ := net.SplitHostPort(proxyListen)
-	if port == "" {
-		port = "5128"
-	}
-
-	proxyAddr := net.JoinHostPort(host, port)
-
-	upstreamMap := make(map[string]string)
-	if mgr := s.proxy.GetUpstreams(); mgr != nil {
-		for id, target := range mgr.All() {
-			if target.URL != nil {
-				upstreamMap[id] = target.URL.Host
-			}
+	var proxyAddr string
+	if pacOverride != "" {
+		proxyAddr = pacOverride
+	} else {
+		host, _, _ := net.SplitHostPort(r.Host)
+		if host == "" {
+			host = r.Host
 		}
+
+		_, port, _ := net.SplitHostPort(proxyListen)
+		if port == "" {
+			port = "5128"
+		}
+
+		proxyAddr = net.JoinHostPort(host, port)
 	}
 
-	pac := matcher.GeneratePAC(proxyAddr, upstreamMap)
+	pac := matcher.GeneratePAC(proxyAddr)
 	w.Header().Set("Content-Type", "application/x-ns-proxy-autoconfig")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)

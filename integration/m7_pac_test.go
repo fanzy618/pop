@@ -67,7 +67,7 @@ func TestPACGeneration(t *testing.T) {
 	// 3. Verify content
 	expectations := []string{
 		"function FindProxyForURL(url, host)",
-		"if (host === \"google.com\" || host.endsWith(\".google.com\")) return \"PROXY upstream:8080\"",
+		"if (host === \"google.com\" || host.endsWith(\".google.com\")) return \"PROXY 127.0.0.1:5128\"",
 		"if (host === \"local.dev\" || host.endsWith(\".local.dev\")) return \"DIRECT\"",
 		"if (host === \"ads.com\" || host.endsWith(\".ads.com\")) return \"PROXY 127.0.0.1:65535\"",
 	}
@@ -76,5 +76,40 @@ func TestPACGeneration(t *testing.T) {
 		if !strings.Contains(pac, exp) {
 			t.Errorf("PAC missing expected content: %q\nFull PAC:\n%s", exp, pac)
 		}
+	}
+}
+
+func TestPACOverride(t *testing.T) {
+	t.Parallel()
+
+	db, _ := store.OpenSQLite(":memory:")
+	defer db.Close()
+	_ = db.CreateUpstream(&config.UpstreamConfig{URL: "http://upstream:8080", Enabled: true})
+	_ = db.CreateRule(&config.RuleConfig{Pattern: "proxy.me", Action: rules.ActionProxy, UpstreamID: 1, Enabled: true})
+
+	proxySrv := proxy.NewServer()
+	tel := telemetry.NewStore(10, 0)
+	cfg := config.Default()
+	cfg.PACProxyAddr = "custom-proxy.internal:8888"
+
+	srv, err := console.NewServer(cfg, db, proxySrv, tel)
+	if err != nil {
+		t.Fatalf("new console server: %v", err)
+	}
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/proxy.pac")
+	if err != nil {
+		t.Fatalf("GET /proxy.pac failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	pac := string(body)
+
+	expected := "return \"PROXY custom-proxy.internal:8888\""
+	if !strings.Contains(pac, expected) {
+		t.Errorf("PAC missing override address, got:\n%s", pac)
 	}
 }

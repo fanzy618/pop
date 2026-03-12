@@ -35,16 +35,20 @@
 - Keep activities in a bounded in-memory ring buffer with TTL eviction.
 - Stats are runtime-only and do not need persistence.
 
-## Milestone and quality gate policy
+## Engineering and Quality Gate Policy
 
-Each milestone must follow this order:
+All modifications (including new features, bug fixes, and refactorings) must adhere to these rules:
+
+- **Comprehensive Testing**: Any code change must be accompanied by relevant tests (excluding console UI tests).
+- **Mandatory Validation**: Before any git commit or image push, run `go test ./...` and ensure **all** tests pass. No regressions are allowed.
+- **Continuous Compliance**: PAC generation and HTTP proxy compliance must be part of the regular test suite.
+
+For Milestones, follow this strict order:
 
 1. Implement milestone scope.
-2. Add/update tests for that scope (console UI tests excluded).
-3. Run `go test ./...` and require all tests to pass.
-4. Commit milestone changes to local git.
-
-Do not move to the next milestone until the current milestone tests pass and the local commit is created.
+2. Add/update tests for that scope.
+3. Run `go test ./...` and confirm all tests pass.
+4. Commit changes to local git.
 
 ## Milestones
 
