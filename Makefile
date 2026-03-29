@@ -1,5 +1,6 @@
 GO ?= go
 BIN_DIR ?= ./bin
+BUILD_DIR ?= ./build
 BIN ?= $(BIN_DIR)/pop
 MCP_PROMPT ?= docs/mcp-webconsole-smoke.prompt.md
 
@@ -12,7 +13,7 @@ DOCKER_IMAGE_REF ?= $(DOCKER_IMAGE):$(DOCKER_VERSION)
 DOCKER_PUSH_IMAGE_REF ?= $(DOCKER_PUSH_IMAGE):$(DOCKER_VERSION)
 DOCKER_PUSH_IMAGE_LATEST ?= $(DOCKER_PUSH_IMAGE):latest
 
-.PHONY: help build build-linux-arm64 docker-build docker-build-push-arm64 run run-bg stop test test-console test-integration fmt vet tidy lint clean mcp-smoke mcp-smoke-path
+.PHONY: help build build-linux-arm64 release docker-build docker-build-push-arm64 run run-bg stop test test-console test-integration fmt vet tidy lint clean mcp-smoke mcp-smoke-path
 
 help: ## Show available commands
 	@awk 'BEGIN {FS = ":.*## "; printf "\nUsage:\n  make <target>\n\nTargets:\n"} /^[a-zA-Z0-9_.-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -24,6 +25,17 @@ build: ## Build POP binary to ./bin/pop
 build-linux-arm64: ## Build Linux ARM64 binary to ./bin/pop-linux-arm64
 	@mkdir -p $(BIN_DIR)
 	GOOS=linux GOARCH=arm64 $(GO) build -ldflags "-X github.com/fanzy618/pop/internal/buildinfo.Version=$(GIT_DESCRIBE)" -o $(BIN_DIR)/pop-linux-arm64 ./cmd/pop
+
+release: ## Build release binaries for multiple platforms to ./build
+	@mkdir -p $(BUILD_DIR)
+	@for os in linux darwin; do \
+		for arch in amd64 arm64; do \
+			echo "Building $$os/$$arch..."; \
+			GOOS=$$os GOARCH=$$arch $(GO) build -ldflags "-X github.com/fanzy618/pop/internal/buildinfo.Version=$(GIT_DESCRIBE)" -o $(BUILD_DIR)/pop-$$os-$$arch ./cmd/pop; \
+		done; \
+	done
+	@echo "Building windows/amd64..."
+	@GOOS=windows GOARCH=amd64 $(GO) build -ldflags "-X github.com/fanzy618/pop/internal/buildinfo.Version=$(GIT_DESCRIBE)" -o $(BUILD_DIR)/pop-windows-amd64.exe ./cmd/pop
 
 docker-build: ## Build Docker image tagged as vX.Y.Z-N-gXXXXXX
 	$(DOCKER) build --build-arg VERSION=$(DOCKER_VERSION) -t $(DOCKER_IMAGE_REF) .
@@ -73,7 +85,7 @@ tidy: ## Tidy go modules
 lint: fmt vet test ## Run basic local quality checks
 
 clean: ## Remove build and temp artifacts
-	rm -rf $(BIN_DIR) .tmp
+	rm -rf $(BIN_DIR) $(BUILD_DIR) .tmp
 
 mcp-smoke-path: ## Print MCP smoke prompt file path
 	@echo $(MCP_PROMPT)

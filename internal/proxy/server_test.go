@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -64,5 +65,27 @@ func TestMatchHost(t *testing.T) {
 	}
 	if got, want := matchHost(httpReq), "example.com"; got != want {
 		t.Fatalf("matchHost(http req) = %q, want %q", got, want)
+	}
+}
+
+func TestLoopDetection(t *testing.T) {
+	t.Parallel()
+
+	srv := NewServer()
+
+	req1, _ := http.NewRequest(http.MethodGet, "http://example.com/", nil)
+	req1.Header.Set("X-Pop-Loop-Id", srv.loopID)
+	
+	rec1 := httptest.NewRecorder()
+	srv.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusLoopDetected {
+		t.Errorf("Expected status %d, got %d", http.StatusLoopDetected, rec1.Code)
+	}
+
+	req2, _ := http.NewRequest(http.MethodGet, "http://example.com/", nil)
+	rec2 := httptest.NewRecorder()
+	srv.ServeHTTP(rec2, req2)
+	if rec2.Code == http.StatusLoopDetected {
+		t.Errorf("Expected status not to be %d, but got it", http.StatusLoopDetected)
 	}
 }

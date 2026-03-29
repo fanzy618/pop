@@ -3,7 +3,9 @@ package proxy
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -35,11 +37,18 @@ type Server struct {
 	directTransport *http.Transport
 	dialer          *net.Dialer
 
+	loopID  string
 	mu      sync.RWMutex
 	matcher *rules.Matcher
 
 	upstreams *upstream.Manager
 	telemetry *telemetry.Store
+}
+
+func generateLoopID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 func NewServer() *Server {
@@ -71,6 +80,7 @@ func NewServerWithDeps(matcher *rules.Matcher, upstreams *upstream.Manager) *Ser
 			ResponseHeaderTimeout: 20 * time.Second,
 		},
 		dialer:    &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second},
+		loopID:    generateLoopID(),
 		matcher:   matcher,
 		upstreams: upstreams,
 		telemetry: telemetry.NewStore(10000, 30*time.Minute),
@@ -145,6 +155,11 @@ func (s *Server) getTelemetry() *telemetry.Store {
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("X-Pop-Loop-Id") == s.loopID {
+		http.Error(w, "Loop Detected", http.StatusLoopDetected)
+		return
+	}
+
 	host := matchHost(r)
 	decision := s.decide(host)
 	tel := s.getTelemetry()
@@ -235,6 +250,9 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request, transport *h
 		upReq.URL.Host = r.Host
 	}
 	removeHopByHopHeaders(upReq.Header)
+	if s.loopID != "" {
+		upReq.Header.Set("X-Pop-Loop-Id", s.loopID)
+	}
 
 	resp, err := transport.RoundTrip(upReq)
 	if err != nil {
@@ -272,7 +290,7 @@ func (s *Server) handleConnectViaUpstream(w http.ResponseWriter, r *http.Request
 		return http.StatusBadGateway, err
 	}
 
-	if err := writeUpstreamConnectRequest(upstreamConn, connectTarget, target.URL); err != nil {
+	if err := writeUpstreamConnectRequest(upstreamConn, connectTarget, target.URL, s.loopID); err != nil {
 		upstreamConn.Close()
 		http.Error(w, "bad gateway", http.StatusBadGateway)
 		return http.StatusBadGateway, err
@@ -318,13 +336,19 @@ func (s *Server) handleConnectViaUpstream(w http.ResponseWriter, r *http.Request
 	return http.StatusOK, nil
 }
 
-func writeUpstreamConnectRequest(conn net.Conn, target string, upstreamURL *url.URL) error {
+func writeUpstreamConnectRequest(conn net.Conn, target string, upstreamURL *url.URL, loopID string) error {
 	var b strings.Builder
 	b.WriteString("CONNECT ")
 	b.WriteString(target)
 	b.WriteString(" HTTP/1.1\r\nHost: ")
 	b.WriteString(target)
 	b.WriteString("\r\n")
+
+	if loopID != "" {
+		b.WriteString("X-Pop-Loop-Id: ")
+		b.WriteString(loopID)
+		b.WriteString("\r\n")
+	}
 
 	if upstreamURL != nil && upstreamURL.User != nil {
 		username := upstreamURL.User.Username()
