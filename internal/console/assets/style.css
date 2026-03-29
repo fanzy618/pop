@@ -102,6 +102,17 @@ body {
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
 }
 
+.charts-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.chart-card {
+  height: 260px;
+  position: relative;
+}
+
 .stats-grid div {
   border: 1px solid var(--line);
   border-radius: 10px;

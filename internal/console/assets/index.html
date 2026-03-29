@@ -31,9 +31,29 @@
       </div>
     </section>
 
+    <div class="charts-grid">
+      <section class="card chart-card">
+        <h2>CPU 使用率 (%)</h2>
+        <canvas id="chart-cpu"></canvas>
+      </section>
+      <section class="card chart-card">
+        <h2>内存使用</h2>
+        <canvas id="chart-memory"></canvas>
+      </section>
+      <section class="card chart-card">
+        <h2>流量统计</h2>
+        <canvas id="chart-bytes"></canvas>
+      </section>
+      <section class="card chart-card">
+        <h2>并发连接数</h2>
+        <canvas id="chart-connections"></canvas>
+      </section>
+    </div>
+
     <p id="msg" class="msg"></p>
   </main>
 
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
   <script src="/assets/app.js"></script>
 </body>
 </html>

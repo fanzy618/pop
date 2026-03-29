@@ -90,6 +90,12 @@ function fmtTime(ts) {
   return d.toLocaleTimeString("zh-CN", { hour12: false });
 }
 
+function fmtTimeShort(ts) {
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleTimeString("zh-CN", { hour12: false, hour: "2-digit", minute: "2-digit" });
+}
+
 function fmtDateTime(ts) {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return "-";
@@ -373,6 +379,220 @@ async function loadStats() {
   if (statsEls.outBytes) statsEls.outBytes.textContent = fmtBytes(st.bytes_out);
 }
 
+let cpuChart, memoryChart, bytesChart, connectionsChart;
+
+async function loadStatsHistory() {
+  const history = await api("/api/stats/history");
+  if (!history || !Array.isArray(history) || history.length < 2) return;
+
+  const finalLabels = [];
+  const finalCpu = [];
+  const finalMemTotal = [];
+  const finalMemHeap = [];
+  const finalBytesIn = [];
+  const finalBytesOut = [];
+  const finalConn = [];
+
+  for (let i = 1; i < history.length; i++) {
+    const s = history[i];
+    const prev = history[i - 1];
+    const d = new Date(s.time);
+    finalLabels.push(fmtTimeShort(s.time));
+    finalCpu.push(s.cpu_percent);
+    finalMemTotal.push(s.memory_bytes);
+    finalMemHeap.push(s.heap_alloc_bytes);
+    finalConn.push(s.connections);
+
+    const dt = (d.getTime() - new Date(prev.time).getTime()) / 1000;
+    if (dt > 0) {
+      finalBytesIn.push(Math.max(0, (s.bytes_in - prev.bytes_in) / dt));
+      finalBytesOut.push(Math.max(0, (s.bytes_out - prev.bytes_out) / dt));
+    } else {
+      finalBytesIn.push(0);
+      finalBytesOut.push(0);
+    }
+  }
+
+  if (cpuChart) {
+    cpuChart.data.labels = finalLabels;
+    cpuChart.data.datasets[0].data = finalCpu;
+    cpuChart.update();
+  }
+  if (memoryChart) {
+    memoryChart.data.labels = finalLabels;
+    memoryChart.data.datasets[0].data = finalMemTotal;
+    memoryChart.data.datasets[1].data = finalMemHeap;
+    memoryChart.update();
+  }
+  if (bytesChart) {
+    bytesChart.data.labels = finalLabels;
+    bytesChart.data.datasets[0].data = finalBytesIn;
+    bytesChart.data.datasets[1].data = finalBytesOut;
+    bytesChart.update();
+  }
+  if (connectionsChart) {
+    connectionsChart.data.labels = finalLabels;
+    connectionsChart.data.datasets[0].data = finalConn;
+    connectionsChart.update();
+  }
+}
+
+function initCharts() {
+  if (typeof Chart === "undefined") return;
+  const commonOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    elements: {
+      point: { radius: 0 },
+      line: { tension: 0.3, fill: false }
+    },
+    interaction: {
+      mode: 'index',
+      intersect: false,
+    },
+  };
+
+  const ctxCpu = document.getElementById('chart-cpu');
+  if (ctxCpu) {
+    cpuChart = new Chart(ctxCpu, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'CPU 使用率 (%)',
+          data: [],
+          borderColor: '#1f6f66',
+          backgroundColor: '#1f6f66',
+        }]
+      },
+      options: {
+        ...commonOptions,
+        scales: {
+          y: { min: 0, max: 100 }
+        }
+      }
+    });
+  }
+
+  const ctxMem = document.getElementById('chart-memory');
+  if (ctxMem) {
+    memoryChart = new Chart(ctxMem, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          {
+            label: '内存总量',
+            data: [],
+            borderColor: '#1f6f66',
+            backgroundColor: '#1f6f66',
+          },
+          {
+            label: '堆分配',
+            data: [],
+            borderColor: '#9c2f1f',
+            backgroundColor: '#9c2f1f',
+          }
+        ]
+      },
+      options: {
+        ...commonOptions,
+        plugins: {
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                let label = context.dataset.label || '';
+                if (label) label += ': ';
+                if (context.parsed.y !== null) label += fmtBytes(context.parsed.y);
+                return label;
+              }
+            }
+          }
+        },
+        scales: {
+          y: {
+            ticks: {
+              callback: function(value) {
+                return fmtBytes(value);
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  const ctxBytes = document.getElementById('chart-bytes');
+  if (ctxBytes) {
+    bytesChart = new Chart(ctxBytes, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          {
+            label: '接收',
+            data: [],
+            borderColor: '#2e7d32',
+            backgroundColor: '#2e7d32',
+          },
+          {
+            label: '发送',
+            data: [],
+            borderColor: '#1565c0',
+            backgroundColor: '#1565c0',
+          }
+        ]
+      },
+      options: {
+        ...commonOptions,
+        plugins: {
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                let label = context.dataset.label || '';
+                if (label) label += ': ';
+                if (context.parsed.y !== null) label += fmtBytes(context.parsed.y) + '/s';
+                return label;
+              }
+            }
+          }
+        },
+        scales: {
+          y: {
+            ticks: {
+              callback: function(value) {
+                return fmtBytes(value) + '/s';
+              }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  const ctxConn = document.getElementById('chart-connections');
+  if (ctxConn) {
+    connectionsChart = new Chart(ctxConn, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: '并发连接数',
+          data: [],
+          borderColor: '#1f6f66',
+          backgroundColor: '#1f6f66',
+        }]
+      },
+      options: {
+        ...commonOptions,
+        scales: {
+          y: { beginAtZero: true }
+        }
+      }
+    });
+  }
+}
+
 async function loadActivities() {
   if (!activityBody) return;
   const events = await api("/api/activities?limit=50");
@@ -640,6 +860,11 @@ async function init() {
       setInterval(() => {
         loadStats().catch((err) => showMsg(`统计刷新失败: ${err.message}`, true));
       }, 2000);
+      initCharts();
+      await loadStatsHistory();
+      setInterval(() => {
+        loadStatsHistory().catch(() => {});
+      }, 10000);
       showMsg("统计页已就绪");
       return;
     }
