@@ -204,6 +204,17 @@ button.danger {
   color: var(--subtle);
 }
 
+/* Connection type colors */
+.act-DIRECT { color: #2e7d32; font-weight: 500; } /* Green */
+.act-PROXY { color: #1565c0; font-weight: 500; }  /* Blue */
+.act-BLOCK { color: #c62828; font-weight: 500; }  /* Red */
+
+/* Status code colors */
+.st-2xx { color: #2e7d32; font-weight: 500; } /* Green */
+.st-3xx { color: #ef6c00; font-weight: 500; } /* Orange */
+.st-4xx { color: #c62828; font-weight: 500; } /* Red */
+.st-5xx { color: #b71c1c; font-weight: bold; } /* Dark Red */
+
 .flash-row {
   animation: flashRow 2.2s ease;
 }

@@ -87,26 +87,37 @@ function fmtBytes(n) {
 function fmtTime(ts) {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return "-";
-  return d.toLocaleTimeString();
+  return d.toLocaleTimeString("zh-CN", { hour12: false });
 }
 
 function fmtDateTime(ts) {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return "-";
-  return d.toLocaleString();
+  return d.toLocaleString("zh-CN", { hour12: false });
 }
 
 function appendActivity(ev) {
   if (!activityBody) return;
   const host = (ev.host || "").trim();
   const tr = document.createElement("tr");
+
+  // Status color class
+  let statusClass = "";
+  if (ev.status >= 200 && ev.status < 300) statusClass = "st-2xx";
+  else if (ev.status >= 300 && ev.status < 400) statusClass = "st-3xx";
+  else if (ev.status >= 400 && ev.status < 500) statusClass = "st-4xx";
+  else if (ev.status >= 500) statusClass = "st-5xx";
+
+  // Action color class
+  const actionClass = `act-${ev.action || ""}`;
+
   tr.innerHTML = `
     <td>${fmtTime(ev.time)}</td>
     <td>${ev.client || "-"}</td>
     <td>${ev.method || "-"}</td>
     <td>${host || "-"}</td>
-    <td>${ev.action || "-"}</td>
-    <td>${ev.status ?? "-"}</td>
+    <td class="${actionClass}">${ev.action || "-"}</td>
+    <td class="${statusClass}">${ev.status ?? "-"}</td>
     <td>${ev.duration_ms ?? "-"}</td>
     <td>
       <button class="secondary" data-act-op="add-rule" data-host="${host}">加入规则</button>
@@ -404,7 +415,7 @@ function startSSE() {
     }
   };
   es.onerror = () => {
-    showMsg("实时活动流连接中断，正在等待浏览器重连...", true);
+    showMsg("访问记录流连接中断，正在等待浏览器重连...", true);
   };
 }
 
@@ -638,7 +649,7 @@ async function init() {
       bindActivityRuleEvents();
       await loadActivities();
       startSSE();
-      showMsg("活动页已就绪");
+      showMsg("访问记录页已就绪");
       return;
     }
 
