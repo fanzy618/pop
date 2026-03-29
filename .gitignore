@@ -5,3 +5,5 @@ bin/
 pop
 local.json
 .sisyphus/
+.DS_Store
+build/
