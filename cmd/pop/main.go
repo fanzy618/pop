@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -54,11 +55,13 @@ func main() {
 		log.Fatalf("build upstreams failed: %v", err)
 	}
 	telStore := telemetry.NewStore(10000, 30*time.Minute)
+	sysStats := telemetry.NewSysStatsCollector(telStore.Snapshot, 360, 10*time.Second, time.Hour)
+	sysStats.Start(context.Background())
 
 	handler := proxy.NewServerWithDeps(cfg.BuildMatcher(ruleItems), upstreams)
 	handler.SetTelemetry(telStore)
 
-	consoleHandler, err := console.NewServer(cfg, db, handler, telStore)
+	consoleHandler, err := console.NewServer(cfg, db, handler, telStore, sysStats)
 	if err != nil {
 		log.Fatalf("build console server failed: %v", err)
 	}

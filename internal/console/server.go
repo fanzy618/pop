@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/fanzy618/pop/internal/buildinfo"
 	"github.com/fanzy618/pop/internal/config"
@@ -34,6 +35,7 @@ type Server struct {
 	db        *store.SQLite
 	proxy     *proxy.Server
 	telemetry *telemetry.Store
+	sysStats  *telemetry.SysStatsCollector
 
 	mu  sync.RWMutex
 	cfg *config.Config
@@ -49,7 +51,7 @@ type rulesListResponse struct {
 	Keyword  string              `json:"keyword,omitempty"`
 }
 
-func NewServer(cfg *config.Config, db *store.SQLite, proxyServer *proxy.Server, telemetryStore *telemetry.Store) (*Server, error) {
+func NewServer(cfg *config.Config, db *store.SQLite, proxyServer *proxy.Server, telemetryStore *telemetry.Store, sysStats *telemetry.SysStatsCollector) (*Server, error) {
 	if cfg == nil {
 		cfg = config.Default()
 	}
@@ -67,6 +69,7 @@ func NewServer(cfg *config.Config, db *store.SQLite, proxyServer *proxy.Server, 
 		db:        db,
 		proxy:     proxyServer,
 		telemetry: telemetryStore,
+		sysStats:  sysStats,
 		cfg:       cloneConfig(cfg),
 	}
 
@@ -95,6 +98,7 @@ func NewServer(cfg *config.Config, db *store.SQLite, proxyServer *proxy.Server, 
 	mux.HandleFunc("/api/data/restore", s.handleDataRestore)
 	mux.HandleFunc("/api/data/import-abp", s.handleDataImportABP)
 	mux.HandleFunc("/api/stats", s.handleStats)
+	mux.HandleFunc("/api/stats/history", s.handleStatsHistory)
 	mux.HandleFunc("/api/activities", s.handleActivities)
 	mux.HandleFunc("/api/activities/stream", s.handleActivitiesStream)
 	mux.HandleFunc("/proxy.pac", s.handlePAC)
@@ -593,6 +597,24 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.telemetry.Snapshot())
+}
+
+func (s *Server) handleStatsHistory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.sysStats == nil {
+		writeJSON(w, http.StatusOK, []telemetry.Sample{})
+		return
+	}
+	window := time.Hour
+	if raw := r.URL.Query().Get("window"); raw != "" {
+		if d, err := time.ParseDuration(raw); err == nil && d > 0 {
+			window = d
+		}
+	}
+	writeJSON(w, http.StatusOK, s.sysStats.History(window))
 }
 
 func (s *Server) handleActivities(w http.ResponseWriter, r *http.Request) {
