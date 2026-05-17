@@ -62,6 +62,93 @@ func TestStoreStats(t *testing.T) {
 	}
 }
 
+// A subscriber whose channel is full must not be able to block the data
+// path: Finish() drops the event via select-default and returns promptly.
+func TestStoreSubscribe_SlowConsumerDropsWithoutBlocking(t *testing.T) {
+	t.Parallel()
+
+	store := NewStore(1000, time.Minute)
+	_, unsubscribe := store.Subscribe(1) // buffer=1, never read from
+	t.Cleanup(unsubscribe)
+
+	const bursts = 200
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < bursts; i++ {
+			store.Start(0)
+			store.Finish(Result{Status: 200, Duration: time.Millisecond})
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("Finish blocked on slow subscriber")
+	}
+
+	// And the subscriber slot is still registered (no goroutine leak / close
+	// of the channel) — second unsubscribe call must be a no-op.
+	unsubscribe()
+}
+
+// Unsubscribe closes the channel; calling it twice is safe.
+func TestStoreSubscribe_UnsubscribeIdempotent(t *testing.T) {
+	t.Parallel()
+
+	store := NewStore(10, time.Minute)
+	ch, unsubscribe := store.Subscribe(4)
+
+	unsubscribe()
+	unsubscribe() // must not panic
+
+	// Channel must be closed.
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Fatalf("expected channel closed after unsubscribe")
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatalf("channel not closed after unsubscribe")
+	}
+}
+
+// Concurrent Start/Finish from many goroutines must end with InFlight==0 and
+// no race detector hits.
+func TestStoreCountersConcurrentStartFinish(t *testing.T) {
+	t.Parallel()
+
+	store := NewStore(10000, time.Minute)
+	const goroutines = 50
+	const perG = 100
+
+	done := make(chan struct{}, goroutines)
+	for g := 0; g < goroutines; g++ {
+		go func() {
+			for i := 0; i < perG; i++ {
+				store.Start(1)
+				store.Finish(Result{Status: 200, ResponseBytes: 1, Duration: time.Microsecond})
+			}
+			done <- struct{}{}
+		}()
+	}
+	for g := 0; g < goroutines; g++ {
+		<-done
+	}
+
+	stats := store.Snapshot()
+	if stats.InFlight != 0 {
+		t.Fatalf("InFlight=%d, want 0", stats.InFlight)
+	}
+	want := int64(goroutines * perG)
+	if stats.TotalRequests != want {
+		t.Fatalf("TotalRequests=%d, want %d", stats.TotalRequests, want)
+	}
+	if stats.BytesIn != want || stats.BytesOut != want {
+		t.Fatalf("byte counters off: in=%d out=%d want %d", stats.BytesIn, stats.BytesOut, want)
+	}
+}
+
 func TestStoreSubscribe(t *testing.T) {
 	t.Parallel()
 

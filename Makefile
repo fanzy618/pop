@@ -64,14 +64,14 @@ stop: ## Stop background POP started by run-bg
 		echo "No .tmp/pop.pid found"; \
 	fi
 
-test: ## Run all tests
-	$(GO) test ./...
+test: ## Run all tests with -race
+	$(GO) test -race ./...
 
 test-console: ## Run web console integration tests only
-	$(GO) test ./integration -run TestConsole -v
+	$(GO) test -race ./integration -run TestConsole -v
 
 test-integration: ## Run all integration tests
-	$(GO) test ./integration -v
+	$(GO) test -race ./integration -v
 
 fmt: ## Format Go code
 	$(GO) fmt ./...

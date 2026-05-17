@@ -173,6 +173,58 @@ func TestRestoreBackupRejectsUnsupportedVersion(t *testing.T) {
 	}
 }
 
+// A backup whose validation passes but whose INSERT phase fails (here: two
+// upstreams sharing the same primary key) must roll back the transaction
+// and leave pre-existing data untouched.
+func TestRestoreBackup_AtomicRollbackOnInsertFailure(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "pop.sqlite")
+	db, err := OpenSQLite(path)
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer db.Close()
+
+	// Seed: 1 upstream + 1 rule that we expect to survive a failed restore.
+	seedBackupData(t, db)
+	preUpstreams, _ := db.ListUpstreams()
+	preRules, _ := db.ListRules()
+	if len(preUpstreams) != 1 || len(preRules) != 1 {
+		t.Fatalf("seed mismatch: upstreams=%d rules=%d", len(preUpstreams), len(preRules))
+	}
+
+	// Construct a payload that passes ValidateRuntime (each upstream looks
+	// fine in isolation) but collides on PRIMARY KEY during the second INSERT.
+	bad := &BackupPayload{
+		DataFormatVersion: CurrentDataFormatVersion,
+		Upstreams: []config.UpstreamConfig{
+			{ID: 9001, Name: "dup-a", URL: "http://127.0.0.1:1", Enabled: true},
+			{ID: 9001, Name: "dup-b", URL: "http://127.0.0.1:2", Enabled: true},
+		},
+	}
+
+	if err := db.RestoreBackup(bad); err == nil {
+		t.Fatalf("expected restore to fail due to duplicate upstream id")
+	}
+
+	// Pre-existing data must still be there, untouched.
+	postUpstreams, err := db.ListUpstreams()
+	if err != nil {
+		t.Fatalf("post list upstreams: %v", err)
+	}
+	postRules, err := db.ListRules()
+	if err != nil {
+		t.Fatalf("post list rules: %v", err)
+	}
+	if len(postUpstreams) != 1 || postUpstreams[0].ID != preUpstreams[0].ID || postUpstreams[0].Name != preUpstreams[0].Name {
+		t.Fatalf("upstreams mutated by failed restore: pre=%+v post=%+v", preUpstreams, postUpstreams)
+	}
+	if len(postRules) != 1 || postRules[0].ID != preRules[0].ID || postRules[0].Pattern != preRules[0].Pattern {
+		t.Fatalf("rules mutated by failed restore: pre=%+v post=%+v", preRules, postRules)
+	}
+}
+
 func TestCreateRuleOverridesSamePatternAndRefreshesCreatedAt(t *testing.T) {
 	t.Parallel()
 
