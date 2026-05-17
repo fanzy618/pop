@@ -11,17 +11,17 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/fanzy618/pop/internal/config"
+	"github.com/fanzy618/pop/internal/model"
 	"github.com/fanzy618/pop/internal/rules"
 )
 
 const CurrentDataFormatVersion = "1"
 
 type BackupPayload struct {
-	DataFormatVersion string                  `json:"data_format_version"`
-	CreatedAt         string                  `json:"created_at"`
-	Upstreams         []config.UpstreamConfig `json:"upstreams"`
-	Rules             []config.RuleConfig     `json:"rules"`
+	DataFormatVersion string           `json:"data_format_version"`
+	CreatedAt         string           `json:"created_at"`
+	Upstreams         []model.Upstream `json:"upstreams"`
+	Rules             []model.Rule     `json:"rules"`
 }
 
 type RuleListOptions struct {
@@ -31,7 +31,7 @@ type RuleListOptions struct {
 }
 
 type RuleListPage struct {
-	Items []config.RuleConfig
+	Items []model.Rule
 	Total int
 }
 
@@ -287,16 +287,16 @@ func (s *SQLite) migrateLegacySchema() error {
 	return nil
 }
 
-func (s *SQLite) ListUpstreams() ([]config.UpstreamConfig, error) {
+func (s *SQLite) ListUpstreams() ([]model.Upstream, error) {
 	rows, err := s.db.Query(`SELECT id, name, url, enabled FROM upstreams ORDER BY created_at DESC, id DESC`)
 	if err != nil {
 		return nil, fmt.Errorf("query upstreams: %w", err)
 	}
 	defer rows.Close()
 
-	items := make([]config.UpstreamConfig, 0)
+	items := make([]model.Upstream, 0)
 	for rows.Next() {
-		var item config.UpstreamConfig
+		var item model.Upstream
 		var name sql.NullString
 		var enabled int
 		if err := rows.Scan(&item.ID, &name, &item.URL, &enabled); err != nil {
@@ -314,7 +314,7 @@ func (s *SQLite) ListUpstreams() ([]config.UpstreamConfig, error) {
 	return items, nil
 }
 
-func (s *SQLite) CreateUpstream(item *config.UpstreamConfig) error {
+func (s *SQLite) CreateUpstream(item *model.Upstream) error {
 	if item == nil {
 		return errors.New("upstream is required")
 	}
@@ -339,7 +339,7 @@ func (s *SQLite) CreateUpstream(item *config.UpstreamConfig) error {
 	return nil
 }
 
-func (s *SQLite) UpdateUpstream(id int64, item config.UpstreamConfig) error {
+func (s *SQLite) UpdateUpstream(id int64, item model.Upstream) error {
 	if id <= 0 {
 		return errors.New("id is required")
 	}
@@ -375,7 +375,7 @@ func (s *SQLite) DeleteUpstream(id int64) error {
 	return nil
 }
 
-func (s *SQLite) ListRules() ([]config.RuleConfig, error) {
+func (s *SQLite) ListRules() ([]model.Rule, error) {
 	page, err := s.ListRulesPage(RuleListOptions{})
 	if err != nil {
 		return nil, err
@@ -411,9 +411,9 @@ func (s *SQLite) ListRulesPage(opts RuleListOptions) (RuleListPage, error) {
 	}
 	defer rows.Close()
 
-	items := make([]config.RuleConfig, 0)
+	items := make([]model.Rule, 0)
 	for rows.Next() {
-		var item config.RuleConfig
+		var item model.Rule
 		var enabled int
 		var upstreamID sql.NullInt64
 		var blockStatus sql.NullInt64
@@ -438,7 +438,7 @@ func (s *SQLite) ListRulesPage(opts RuleListOptions) (RuleListPage, error) {
 	return RuleListPage{Items: items, Total: total}, nil
 }
 
-func (s *SQLite) CreateRule(item *config.RuleConfig) error {
+func (s *SQLite) CreateRule(item *model.Rule) error {
 	if item == nil {
 		return errors.New("rule is required")
 	}
@@ -518,7 +518,7 @@ func (s *SQLite) CreateRule(item *config.RuleConfig) error {
 	return nil
 }
 
-func (s *SQLite) UpdateRule(id int64, item config.RuleConfig) error {
+func (s *SQLite) UpdateRule(id int64, item model.Rule) error {
 	if id <= 0 {
 		return errors.New("id is required")
 	}
@@ -602,7 +602,7 @@ func (s *SQLite) RestoreBackup(payload *BackupPayload) error {
 	if payload.DataFormatVersion != CurrentDataFormatVersion {
 		return fmt.Errorf("unsupported data_format_version: %s", payload.DataFormatVersion)
 	}
-	if err := config.ValidateRuntime(payload.Upstreams, payload.Rules); err != nil {
+	if err := model.ValidateRuntime(payload.Upstreams, payload.Rules); err != nil {
 		return fmt.Errorf("backup payload validation failed: %w", err)
 	}
 

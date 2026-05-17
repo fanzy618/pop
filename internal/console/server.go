@@ -21,6 +21,7 @@ import (
 
 	"github.com/fanzy618/pop/internal/buildinfo"
 	"github.com/fanzy618/pop/internal/config"
+	"github.com/fanzy618/pop/internal/model"
 	"github.com/fanzy618/pop/internal/proxy"
 	"github.com/fanzy618/pop/internal/rules"
 	"github.com/fanzy618/pop/internal/store"
@@ -44,7 +45,7 @@ type Server struct {
 }
 
 type rulesListResponse struct {
-	Items    []config.RuleConfig `json:"items"`
+	Items    []model.Rule `json:"items"`
 	Total    int                 `json:"total"`
 	Page     int                 `json:"page"`
 	PageSize int                 `json:"page_size"`
@@ -230,7 +231,7 @@ func (s *Server) handleUpstreams(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, items)
 	case http.MethodPost:
-		var up config.UpstreamConfig
+		var up model.Upstream
 		if err := json.NewDecoder(r.Body).Decode(&up); err != nil {
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
@@ -266,7 +267,7 @@ func (s *Server) handleUpstreamByID(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodPut:
-		var up config.UpstreamConfig
+		var up model.Upstream
 		if err := json.NewDecoder(r.Body).Decode(&up); err != nil {
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
@@ -349,7 +350,7 @@ func (s *Server) handleRules(w http.ResponseWriter, r *http.Request) {
 			Keyword:  keyword,
 		})
 	case http.MethodPost:
-		var rule config.RuleConfig
+		var rule model.Rule
 		if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
@@ -399,7 +400,7 @@ func (s *Server) handleRuleByID(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodPut:
-		var rule config.RuleConfig
+		var rule model.Rule
 		if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
 			http.Error(w, "invalid json", http.StatusBadRequest)
 			return
@@ -559,7 +560,7 @@ func (s *Server) handleDataImportABP(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		batchSeen[normPattern] = struct{}{}
-		rule := config.RuleConfig{
+		rule := model.Rule{
 			Enabled:    enabled,
 			Pattern:    pattern,
 			Action:     action,
@@ -692,16 +693,16 @@ func (s *Server) rebuildRuntimeLocked() error {
 	if err != nil {
 		return err
 	}
-	if err := config.ValidateRuntime(upstreamItems, ruleItems); err != nil {
+	if err := model.ValidateRuntime(upstreamItems, ruleItems); err != nil {
 		return err
 	}
 
-	mgr, err := upstream.NewManager(config.BuildUpstreamConfigs(upstreamItems))
+	mgr, err := upstream.NewManager(model.BuildUpstreamConfigs(upstreamItems))
 	if err != nil {
 		return err
 	}
 
-	s.proxy.SetMatcher(s.cfg.BuildMatcher(ruleItems))
+	s.proxy.SetMatcher(model.BuildMatcher(ruleItems, s.cfg.DefaultAction))
 	s.proxy.SetUpstreams(mgr)
 	s.proxy.SetTelemetry(s.telemetry)
 	return nil

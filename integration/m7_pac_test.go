@@ -9,6 +9,7 @@ import (
 
 	"github.com/fanzy618/pop/internal/config"
 	"github.com/fanzy618/pop/internal/console"
+	"github.com/fanzy618/pop/internal/model"
 	"github.com/fanzy618/pop/internal/proxy"
 	"github.com/fanzy618/pop/internal/rules"
 	"github.com/fanzy618/pop/internal/store"
@@ -26,12 +27,12 @@ func TestPACGeneration(t *testing.T) {
 	defer db.Close()
 
 	// Add an upstream first
-	_ = db.CreateUpstream(&config.UpstreamConfig{URL: "http://upstream:8080", Enabled: true})
+	_ = db.CreateUpstream(&model.Upstream{URL: "http://upstream:8080", Enabled: true})
 
 	// Add some rules
-	_ = db.CreateRule(&config.RuleConfig{Pattern: "google.com", Action: rules.ActionProxy, UpstreamID: 1, Enabled: true})
-	_ = db.CreateRule(&config.RuleConfig{Pattern: "local.dev", Action: rules.ActionDirect, Enabled: true})
-	_ = db.CreateRule(&config.RuleConfig{Pattern: "ads.com", Action: rules.ActionBlock, Enabled: true})
+	_ = db.CreateRule(&model.Rule{Pattern: "google.com", Action: rules.ActionProxy, UpstreamID: 1, Enabled: true})
+	_ = db.CreateRule(&model.Rule{Pattern: "local.dev", Action: rules.ActionDirect, Enabled: true})
+	_ = db.CreateRule(&model.Rule{Pattern: "ads.com", Action: rules.ActionBlock, Enabled: true})
 
 	proxySrv := proxy.NewServer()
 	tel := telemetry.NewStore(10, 0)
@@ -84,8 +85,8 @@ func TestPACOverride(t *testing.T) {
 
 	db, _ := store.OpenSQLite(":memory:")
 	defer db.Close()
-	_ = db.CreateUpstream(&config.UpstreamConfig{URL: "http://upstream:8080", Enabled: true})
-	_ = db.CreateRule(&config.RuleConfig{Pattern: "proxy.me", Action: rules.ActionProxy, UpstreamID: 1, Enabled: true})
+	_ = db.CreateUpstream(&model.Upstream{URL: "http://upstream:8080", Enabled: true})
+	_ = db.CreateRule(&model.Rule{Pattern: "proxy.me", Action: rules.ActionProxy, UpstreamID: 1, Enabled: true})
 
 	proxySrv := proxy.NewServer()
 	tel := telemetry.NewStore(10, 0)

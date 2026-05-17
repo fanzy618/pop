@@ -21,13 +21,12 @@ func TestDefaultValues(t *testing.T) {
 	}
 }
 
-func TestValidateRejectsNonHTTPUpstream(t *testing.T) {
+func TestValidateRejectsUnknownDefaultAction(t *testing.T) {
 	t.Parallel()
 
-	if err := ValidateRuntime(
-		[]UpstreamConfig{{ID: 1, URL: "socks5://127.0.0.1:1080", Enabled: true}},
-		nil,
-	); err == nil {
-		t.Fatalf("expected validate to reject non-http upstream")
+	cfg := Default()
+	cfg.DefaultAction = "WAT"
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("expected Validate to reject unknown default_action")
 	}
 }

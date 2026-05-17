@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/fanzy618/pop/internal/config"
+	"github.com/fanzy618/pop/internal/model"
 	"github.com/fanzy618/pop/internal/proxy"
 	"github.com/fanzy618/pop/internal/rules"
 	"github.com/fanzy618/pop/internal/store"
@@ -28,7 +29,7 @@ func TestConfigPersistsAcrossRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	rule := config.RuleConfig{Enabled: true, Pattern: "ads-pop.test", Action: rules.ActionBlock, BlockStatus: http.StatusGone}
+	rule := model.Rule{Enabled: true, Pattern: "ads-pop.test", Action: rules.ActionBlock, BlockStatus: http.StatusGone}
 	if err := db.CreateRule(&rule); err != nil {
 		t.Fatalf("create rule: %v", err)
 	}
@@ -51,12 +52,12 @@ func TestConfigPersistsAcrossRestart(t *testing.T) {
 			t.Fatalf("list rules: %v", err)
 		}
 
-		mgr, err := upstream.NewManager(config.BuildUpstreamConfigs(upstreamItems))
+		mgr, err := upstream.NewManager(model.BuildUpstreamConfigs(upstreamItems))
 		if err != nil {
 			t.Fatalf("build upstream manager: %v", err)
 		}
 
-		pop := httptest.NewServer(proxy.NewServerWithDeps(cfg.BuildMatcher(ruleItems), mgr))
+		pop := httptest.NewServer(proxy.NewServerWithDeps(model.BuildMatcher(ruleItems, cfg.DefaultAction), mgr))
 		defer pop.Close()
 
 		proxyURL, err := url.Parse(pop.URL)

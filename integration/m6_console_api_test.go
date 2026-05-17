@@ -18,17 +18,18 @@ import (
 	"github.com/fanzy618/pop/internal/buildinfo"
 	"github.com/fanzy618/pop/internal/config"
 	"github.com/fanzy618/pop/internal/console"
+	"github.com/fanzy618/pop/internal/model"
 	"github.com/fanzy618/pop/internal/proxy"
 	"github.com/fanzy618/pop/internal/store"
 	"github.com/fanzy618/pop/internal/telemetry"
 )
 
 type rulesListResponse struct {
-	Items    []config.RuleConfig `json:"items"`
-	Total    int                 `json:"total"`
-	Page     int                 `json:"page"`
-	PageSize int                 `json:"page_size"`
-	Keyword  string              `json:"keyword"`
+	Items    []model.Rule `json:"items"`
+	Total    int          `json:"total"`
+	Page     int          `json:"page"`
+	PageSize int          `json:"page_size"`
+	Keyword  string       `json:"keyword"`
 }
 
 func TestConsoleNoAuthRequired(t *testing.T) {
@@ -282,7 +283,7 @@ func TestConsoleUpstreamsNameOptional(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	var upstreams []config.UpstreamConfig
+	var upstreams []model.Upstream
 	if err := json.NewDecoder(resp.Body).Decode(&upstreams); err != nil {
 		t.Fatalf("decode upstreams: %v", err)
 	}
@@ -387,7 +388,7 @@ func TestConsoleRuleCreateWithUpstreamReference(t *testing.T) {
 		t.Fatalf("GET upstreams: %v", err)
 	}
 	defer upResp.Body.Close()
-	var upstreams []config.UpstreamConfig
+	var upstreams []model.Upstream
 	if err := json.NewDecoder(upResp.Body).Decode(&upstreams); err != nil {
 		t.Fatalf("decode upstreams: %v", err)
 	}
@@ -435,7 +436,7 @@ func TestConsoleDataBackupAndRestore(t *testing.T) {
 		t.Fatalf("GET upstreams: %v", err)
 	}
 	defer upResp.Body.Close()
-	var upstreams []config.UpstreamConfig
+	var upstreams []model.Upstream
 	if err := json.NewDecoder(upResp.Body).Decode(&upstreams); err != nil {
 		t.Fatalf("decode upstreams: %v", err)
 	}
@@ -531,7 +532,7 @@ func TestConsoleImportABP(t *testing.T) {
 		t.Fatalf("GET upstreams: %v", err)
 	}
 	defer upResp.Body.Close()
-	var upstreams []config.UpstreamConfig
+	var upstreams []model.Upstream
 	if err := json.NewDecoder(upResp.Body).Decode(&upstreams); err != nil {
 		t.Fatalf("decode upstreams: %v", err)
 	}

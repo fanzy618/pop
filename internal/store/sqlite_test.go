@@ -5,17 +5,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fanzy618/pop/internal/config"
+	"github.com/fanzy618/pop/internal/model"
 	"github.com/fanzy618/pop/internal/rules"
 )
 
 func seedBackupData(t *testing.T, db *SQLite) {
 	t.Helper()
-	up := config.UpstreamConfig{Name: "backup-up", URL: "http://127.0.0.1:18080", Enabled: true}
+	up := model.Upstream{Name: "backup-up", URL: "http://127.0.0.1:18080", Enabled: true}
 	if err := db.CreateUpstream(&up); err != nil {
 		t.Fatalf("create upstream: %v", err)
 	}
-	r := config.RuleConfig{Enabled: true, Pattern: "backup.local", Action: rules.ActionProxy, UpstreamID: up.ID}
+	r := model.Rule{Enabled: true, Pattern: "backup.local", Action: rules.ActionProxy, UpstreamID: up.ID}
 	if err := db.CreateRule(&r); err != nil {
 		t.Fatalf("create rule: %v", err)
 	}
@@ -54,12 +54,12 @@ func TestListRulesReturnsNewestFirst(t *testing.T) {
 	}
 	defer db.Close()
 
-	rule1 := config.RuleConfig{Enabled: true, Pattern: "a.test", Action: rules.ActionDirect}
+	rule1 := model.Rule{Enabled: true, Pattern: "a.test", Action: rules.ActionDirect}
 	if err := db.CreateRule(&rule1); err != nil {
 		t.Fatalf("create rule r1: %v", err)
 	}
 	time.Sleep(2 * time.Millisecond)
-	rule2 := config.RuleConfig{Enabled: true, Pattern: "b.test", Action: rules.ActionDirect}
+	rule2 := model.Rule{Enabled: true, Pattern: "b.test", Action: rules.ActionDirect}
 	if err := db.CreateRule(&rule2); err != nil {
 		t.Fatalf("create rule r2: %v", err)
 	}
@@ -86,7 +86,7 @@ func TestDeleteUpstreamBlockedByRuleReference(t *testing.T) {
 	}
 	defer db.Close()
 
-	upstream := config.UpstreamConfig{Name: "u1", URL: "http://127.0.0.1:8080", Enabled: true}
+	upstream := model.Upstream{Name: "u1", URL: "http://127.0.0.1:8080", Enabled: true}
 	if err := db.CreateUpstream(&upstream); err != nil {
 		t.Fatalf("create upstream: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestDeleteUpstreamBlockedByRuleReference(t *testing.T) {
 	if len(upstreams) != 1 {
 		t.Fatalf("upstreams length=%d, want=1", len(upstreams))
 	}
-	rule := config.RuleConfig{Enabled: true, Pattern: "example.com", Action: rules.ActionProxy, UpstreamID: upstreams[0].ID}
+	rule := model.Rule{Enabled: true, Pattern: "example.com", Action: rules.ActionProxy, UpstreamID: upstreams[0].ID}
 	if err := db.CreateRule(&rule); err != nil {
 		t.Fatalf("create rule: %v", err)
 	}
@@ -198,7 +198,7 @@ func TestRestoreBackup_AtomicRollbackOnInsertFailure(t *testing.T) {
 	// fine in isolation) but collides on PRIMARY KEY during the second INSERT.
 	bad := &BackupPayload{
 		DataFormatVersion: CurrentDataFormatVersion,
-		Upstreams: []config.UpstreamConfig{
+		Upstreams: []model.Upstream{
 			{ID: 9001, Name: "dup-a", URL: "http://127.0.0.1:1", Enabled: true},
 			{ID: 9001, Name: "dup-b", URL: "http://127.0.0.1:2", Enabled: true},
 		},
@@ -235,12 +235,12 @@ func TestCreateRuleOverridesSamePatternAndRefreshesCreatedAt(t *testing.T) {
 	}
 	defer db.Close()
 
-	first := config.RuleConfig{Enabled: true, Pattern: "Example.COM", Action: rules.ActionDirect}
+	first := model.Rule{Enabled: true, Pattern: "Example.COM", Action: rules.ActionDirect}
 	if err := db.CreateRule(&first); err != nil {
 		t.Fatalf("create first rule: %v", err)
 	}
 	time.Sleep(2 * time.Millisecond)
-	second := config.RuleConfig{Enabled: true, Pattern: "example.com.", Action: rules.ActionBlock, BlockStatus: 410}
+	second := model.Rule{Enabled: true, Pattern: "example.com.", Action: rules.ActionBlock, BlockStatus: 410}
 	if err := db.CreateRule(&second); err != nil {
 		t.Fatalf("create second rule: %v", err)
 	}

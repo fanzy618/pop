@@ -12,6 +12,7 @@ import (
 
 	"github.com/fanzy618/pop/internal/config"
 	"github.com/fanzy618/pop/internal/console"
+	"github.com/fanzy618/pop/internal/model"
 	"github.com/fanzy618/pop/internal/proxy"
 	"github.com/fanzy618/pop/internal/rules"
 	"github.com/fanzy618/pop/internal/store"
@@ -46,11 +47,11 @@ func main() {
 	if err != nil {
 		log.Fatalf("load rules from sqlite failed: %v", err)
 	}
-	if err := config.ValidateRuntime(upstreamItems, ruleItems); err != nil {
+	if err := model.ValidateRuntime(upstreamItems, ruleItems); err != nil {
 		log.Fatalf("validate runtime config failed: %v", err)
 	}
 
-	upstreams, err := upstream.NewManager(config.BuildUpstreamConfigs(upstreamItems))
+	upstreams, err := upstream.NewManager(model.BuildUpstreamConfigs(upstreamItems))
 	if err != nil {
 		log.Fatalf("build upstreams failed: %v", err)
 	}
@@ -58,7 +59,7 @@ func main() {
 	sysStats := telemetry.NewSysStatsCollector(telStore.Snapshot, 360, 10*time.Second, time.Hour)
 	sysStats.Start(context.Background())
 
-	handler := proxy.NewServerWithDeps(cfg.BuildMatcher(ruleItems), upstreams)
+	handler := proxy.NewServerWithDeps(model.BuildMatcher(ruleItems, cfg.DefaultAction), upstreams)
 	handler.SetTelemetry(telStore)
 
 	consoleHandler, err := console.NewServer(cfg, db, handler, telStore, sysStats)

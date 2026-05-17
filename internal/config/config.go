@@ -1,14 +1,14 @@
+// Package config holds the runtime parameters that govern process startup —
+// listen addresses, sqlite path, default action, PAC override. Persistence
+// DTOs and assembly helpers live in internal/model.
 package config
 
 import (
 	"errors"
 	"fmt"
-	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/fanzy618/pop/internal/rules"
-	"github.com/fanzy618/pop/internal/upstream"
 )
 
 type Config struct {
@@ -17,23 +17,6 @@ type Config struct {
 	SQLitePath    string       `json:"sqlite_path,omitempty"`
 	PACProxyAddr  string       `json:"pac_proxy_addr,omitempty"`
 	DefaultAction rules.Action `json:"default_action"`
-}
-
-type UpstreamConfig struct {
-	ID      int64  `json:"id"`
-	Name    string `json:"name,omitempty"`
-	URL     string `json:"url"`
-	Enabled bool   `json:"enabled"`
-}
-
-type RuleConfig struct {
-	ID          int64        `json:"id"`
-	Enabled     bool         `json:"enabled"`
-	Pattern     string       `json:"pattern"`
-	Action      rules.Action `json:"action"`
-	UpstreamID  int64        `json:"upstream_id,omitempty"`
-	BlockStatus int          `json:"block_status,omitempty"`
-	CreatedAt   int64        `json:"created_at,omitempty"`
 }
 
 func Default() *Config {
@@ -74,91 +57,4 @@ func (c *Config) Validate() error {
 	}
 
 	return nil
-}
-
-func ValidateRuntime(upstreams []UpstreamConfig, rulesCfg []RuleConfig) error {
-	upstreamIDs := make(map[int64]struct{}, len(upstreams))
-	for _, up := range upstreams {
-		if up.ID <= 0 {
-			return errors.New("upstream id must be positive")
-		}
-		if up.URL == "" {
-			return fmt.Errorf("upstream %d URL cannot be empty", up.ID)
-		}
-		if !strings.HasPrefix(strings.ToLower(up.URL), "http://") {
-			return fmt.Errorf("upstream %d must use http://", up.ID)
-		}
-		upstreamIDs[up.ID] = struct{}{}
-	}
-
-	for _, rule := range rulesCfg {
-		if rule.ID <= 0 {
-			return errors.New("rule id must be positive")
-		}
-		if rule.Pattern == "" {
-			return fmt.Errorf("rule %d pattern cannot be empty", rule.ID)
-		}
-		switch rule.Action {
-		case rules.ActionDirect:
-		case rules.ActionBlock:
-			if rule.BlockStatus == 0 {
-				rule.BlockStatus = 404
-			}
-			if rule.BlockStatus < 0 || rule.BlockStatus > 599 {
-				return fmt.Errorf("rule %d has invalid block_status", rule.ID)
-			}
-		case rules.ActionProxy:
-			if rule.UpstreamID <= 0 {
-				return fmt.Errorf("rule %d must set upstream_id for PROXY action", rule.ID)
-			}
-			if _, ok := upstreamIDs[rule.UpstreamID]; !ok {
-				return fmt.Errorf("rule %d references unknown upstream %d", rule.ID, rule.UpstreamID)
-			}
-		default:
-			return fmt.Errorf("rule %d has unsupported action %q", rule.ID, rule.Action)
-		}
-	}
-
-	return nil
-}
-
-func (c *Config) BuildMatcher(rulesCfg []RuleConfig) *rules.Matcher {
-	ordered := make([]RuleConfig, 0, len(rulesCfg))
-	ordered = append(ordered, rulesCfg...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		if ordered[i].CreatedAt == ordered[j].CreatedAt {
-			return ordered[i].ID > ordered[j].ID
-		}
-		return ordered[i].CreatedAt > ordered[j].CreatedAt
-	})
-
-	ruleSet := make([]rules.Rule, 0, len(ordered))
-	for _, r := range ordered {
-		upstreamID := ""
-		if r.UpstreamID > 0 {
-			upstreamID = strconv.FormatInt(r.UpstreamID, 10)
-		}
-		ruleSet = append(ruleSet, rules.Rule{
-			ID:          strconv.FormatInt(r.ID, 10),
-			Enabled:     r.Enabled,
-			Pattern:     r.Pattern,
-			Action:      r.Action,
-			UpstreamID:  upstreamID,
-			BlockStatus: r.BlockStatus,
-		})
-	}
-
-	return rules.NewMatcher(ruleSet, rules.Decision{Action: c.DefaultAction})
-}
-
-func BuildUpstreamConfigs(upstreamsCfg []UpstreamConfig) []upstream.Config {
-	out := make([]upstream.Config, 0, len(upstreamsCfg))
-	for _, up := range upstreamsCfg {
-		out = append(out, upstream.Config{
-			ID:      strconv.FormatInt(up.ID, 10),
-			URL:     up.URL,
-			Enabled: up.Enabled,
-		})
-	}
-	return out
 }
