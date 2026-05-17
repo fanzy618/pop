@@ -17,7 +17,7 @@ func TestRuleBlockStatusCode(t *testing.T) {
 		{ID: "block-ads", Enabled: true, Pattern: "ads-example.local", Action: rules.ActionBlock, BlockStatus: http.StatusGone},
 	}, rules.Decision{Action: rules.ActionDirect})
 
-	proxyServer := httptest.NewServer(proxy.NewServerWithMatcher(matcher))
+	proxyServer := httptest.NewServer(proxy.NewServerWithSnapshot(proxy.NewSnapshot(matcher, nil)))
 	t.Cleanup(proxyServer.Close)
 
 	proxyURL, err := url.Parse(proxyServer.URL)

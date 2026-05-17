@@ -57,7 +57,7 @@ func TestConfigPersistsAcrossRestart(t *testing.T) {
 			t.Fatalf("build upstream manager: %v", err)
 		}
 
-		pop := httptest.NewServer(proxy.NewServerWithDeps(model.BuildMatcher(ruleItems, cfg.DefaultAction), mgr))
+		pop := httptest.NewServer(proxy.NewServerWithSnapshot(proxy.NewSnapshot(model.BuildMatcher(ruleItems, cfg.DefaultAction), mgr)))
 		defer pop.Close()
 
 		proxyURL, err := url.Parse(pop.URL)

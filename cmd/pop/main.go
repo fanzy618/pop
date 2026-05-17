@@ -59,7 +59,7 @@ func main() {
 	sysStats := telemetry.NewSysStatsCollector(telStore.Snapshot, 360, 10*time.Second, time.Hour)
 	sysStats.Start(context.Background())
 
-	handler := proxy.NewServerWithDeps(model.BuildMatcher(ruleItems, cfg.DefaultAction), upstreams)
+	handler := proxy.NewServerWithSnapshot(proxy.NewSnapshot(model.BuildMatcher(ruleItems, cfg.DefaultAction), upstreams))
 	handler.SetTelemetry(telStore)
 
 	consoleHandler, err := console.NewServer(cfg, db, handler, telStore, sysStats)

@@ -44,7 +44,7 @@ func TestRuleRoutesToDifferentUpstreams(t *testing.T) {
 		{ID: "route-b", Enabled: true, Pattern: "beta.pop.test", Action: rules.ActionProxy, UpstreamID: "B"},
 	}, rules.Decision{Action: rules.ActionDirect})
 
-	pop := httptest.NewServer(proxy.NewServerWithDeps(matcher, mgr))
+	pop := httptest.NewServer(proxy.NewServerWithSnapshot(proxy.NewSnapshot(matcher, mgr)))
 	t.Cleanup(pop.Close)
 
 	proxyURL, err := url.Parse(pop.URL)

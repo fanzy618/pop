@@ -109,11 +109,12 @@ func NewServer(cfg *config.Config, db *store.SQLite, proxyServer *proxy.Server, 
 }
 
 func (s *Server) handlePAC(w http.ResponseWriter, r *http.Request) {
-	matcher := s.proxy.GetMatcher()
-	if matcher == nil {
+	snap := s.proxy.Snapshot()
+	if snap == nil || snap.Matcher == nil {
 		http.Error(w, "matcher not available", http.StatusInternalServerError)
 		return
 	}
+	matcher := snap.Matcher
 
 	s.mu.RLock()
 	proxyListen := s.cfg.ProxyListen
@@ -702,8 +703,7 @@ func (s *Server) rebuildRuntimeLocked() error {
 		return err
 	}
 
-	s.proxy.SetMatcher(model.BuildMatcher(ruleItems, s.cfg.DefaultAction))
-	s.proxy.SetUpstreams(mgr)
+	s.proxy.Publish(proxy.NewSnapshot(model.BuildMatcher(ruleItems, s.cfg.DefaultAction), mgr))
 	s.proxy.SetTelemetry(s.telemetry)
 	return nil
 }

@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/fanzy618/pop/internal/rules"
@@ -33,16 +34,33 @@ var hopByHopHeaders = []string{
 	"Upgrade",
 }
 
+// RouteSnapshot holds the immutable pair of (matcher, upstream-manager) that
+// the data path uses to dispatch a single request. Publishing a new snapshot
+// is the only way to mutate routing — fields are never modified in place.
+type RouteSnapshot struct {
+	Matcher   *rules.Matcher
+	Upstreams *upstream.Manager
+}
+
+// NewSnapshot fills in safe defaults for nil arguments so callers can publish
+// a partial snapshot without nil-checks.
+func NewSnapshot(matcher *rules.Matcher, upstreams *upstream.Manager) *RouteSnapshot {
+	if matcher == nil {
+		matcher = rules.NewMatcher(nil, rules.Decision{Action: rules.ActionDirect})
+	}
+	if upstreams == nil {
+		upstreams, _ = upstream.NewManager(nil)
+	}
+	return &RouteSnapshot{Matcher: matcher, Upstreams: upstreams}
+}
+
 type Server struct {
 	directTransport *http.Transport
 	dialer          *net.Dialer
+	loopID          string
 
-	loopID  string
-	mu      sync.RWMutex
-	matcher *rules.Matcher
-
-	upstreams *upstream.Manager
-	telemetry *telemetry.Store
+	snapshot  atomic.Pointer[RouteSnapshot]
+	telemetry atomic.Pointer[telemetry.Store]
 }
 
 func generateLoopID() string {
@@ -51,24 +69,19 @@ func generateLoopID() string {
 	return hex.EncodeToString(b)
 }
 
+// NewServerWithSnapshot constructs a Server pre-populated with snap. Useful
+// for tests that want to wire in routing state at construction time.
+func NewServerWithSnapshot(snap *RouteSnapshot) *Server {
+	s := NewServer()
+	s.Publish(snap)
+	return s
+}
+
+// NewServer creates a Server with an empty default snapshot (DIRECT for all
+// hosts) and a default in-memory telemetry store. Callers wire production
+// state in via Publish / SetTelemetry.
 func NewServer() *Server {
-	return NewServerWithMatcher(nil)
-}
-
-func NewServerWithMatcher(matcher *rules.Matcher) *Server {
-	upstreams, _ := upstream.NewManager(nil)
-	return NewServerWithDeps(matcher, upstreams)
-}
-
-func NewServerWithDeps(matcher *rules.Matcher, upstreams *upstream.Manager) *Server {
-	if matcher == nil {
-		matcher = rules.NewMatcher(nil, rules.Decision{Action: rules.ActionDirect})
-	}
-	if upstreams == nil {
-		upstreams, _ = upstream.NewManager(nil)
-	}
-
-	return &Server{
+	s := &Server{
 		directTransport: &http.Transport{
 			Proxy:                 nil,
 			DialContext:           (&net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
@@ -79,79 +92,58 @@ func NewServerWithDeps(matcher *rules.Matcher, upstreams *upstream.Manager) *Ser
 			ExpectContinueTimeout: 1 * time.Second,
 			ResponseHeaderTimeout: 20 * time.Second,
 		},
-		dialer:    &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second},
-		loopID:    generateLoopID(),
-		matcher:   matcher,
-		upstreams: upstreams,
-		telemetry: telemetry.NewStore(10000, 30*time.Minute),
+		dialer: &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second},
+		loopID: generateLoopID(),
 	}
+	s.snapshot.Store(NewSnapshot(nil, nil))
+	s.telemetry.Store(telemetry.NewStore(10000, 30*time.Minute))
+	return s
 }
 
-func (s *Server) SetMatcher(matcher *rules.Matcher) {
-	if matcher == nil {
-		matcher = rules.NewMatcher(nil, rules.Decision{Action: rules.ActionDirect})
+// Publish atomically swaps in a new routing snapshot. Concurrent requests
+// observe either the old or new snapshot — never a torn pair.
+func (s *Server) Publish(snap *RouteSnapshot) {
+	if snap == nil {
+		snap = NewSnapshot(nil, nil)
 	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.matcher = matcher
+	if snap.Matcher == nil || snap.Upstreams == nil {
+		snap = NewSnapshot(snap.Matcher, snap.Upstreams)
+	}
+	s.snapshot.Store(snap)
 }
 
-func (s *Server) GetMatcher() *rules.Matcher {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.matcher
+// Snapshot returns the current routing snapshot. Read-only.
+func (s *Server) Snapshot() *RouteSnapshot {
+	return s.snapshot.Load()
+}
+
+// SetTelemetry swaps the telemetry sink. Hot-swappable for tests and for
+// console wiring after construction.
+func (s *Server) SetTelemetry(store *telemetry.Store) {
+	if store == nil {
+		store = telemetry.NewStore(10000, 30*time.Minute)
+	}
+	s.telemetry.Store(store)
 }
 
 func (s *Server) decide(host string) rules.Decision {
-	s.mu.RLock()
-	matcher := s.matcher
-	s.mu.RUnlock()
-
-	if matcher == nil {
+	snap := s.snapshot.Load()
+	if snap == nil || snap.Matcher == nil {
 		return rules.Decision{Action: rules.ActionDirect}
 	}
-
-	return matcher.Decide(host)
-}
-
-func (s *Server) SetUpstreams(manager *upstream.Manager) {
-	if manager == nil {
-		manager, _ = upstream.NewManager(nil)
-	}
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.upstreams = manager
-}
-
-func (s *Server) GetUpstreams() *upstream.Manager {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.upstreams
+	return snap.Matcher.Decide(host)
 }
 
 func (s *Server) getUpstream(id string) (*upstream.Target, bool) {
-	s.mu.RLock()
-	m := s.upstreams
-	s.mu.RUnlock()
-	if m == nil {
+	snap := s.snapshot.Load()
+	if snap == nil || snap.Upstreams == nil {
 		return nil, false
 	}
-
-	return m.Get(id)
-}
-
-func (s *Server) SetTelemetry(store *telemetry.Store) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.telemetry = store
+	return snap.Upstreams.Get(id)
 }
 
 func (s *Server) getTelemetry() *telemetry.Store {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.telemetry
+	return s.telemetry.Load()
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

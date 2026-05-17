@@ -54,7 +54,7 @@ func TestProxy_ConnectViaUpstream_Non200ReturnsBadGateway(t *testing.T) {
 		{ID: "r1", Enabled: true, Pattern: "secret.test", Action: rules.ActionProxy, UpstreamID: "deny"},
 	}, rules.Decision{Action: rules.ActionDirect})
 
-	pop := httptest.NewServer(proxy.NewServerWithDeps(matcher, mgr))
+	pop := httptest.NewServer(proxy.NewServerWithSnapshot(proxy.NewSnapshot(matcher, mgr)))
 	t.Cleanup(pop.Close)
 
 	popURL, _ := url.Parse(pop.URL)
@@ -107,7 +107,7 @@ func TestProxy_UpstreamHTTPResponseTruncated_BadGateway(t *testing.T) {
 		{ID: "r1", Enabled: true, Pattern: "truncated.test", Action: rules.ActionProxy, UpstreamID: "bad"},
 	}, rules.Decision{Action: rules.ActionDirect})
 
-	pop := httptest.NewServer(proxy.NewServerWithDeps(matcher, mgr))
+	pop := httptest.NewServer(proxy.NewServerWithSnapshot(proxy.NewSnapshot(matcher, mgr)))
 	t.Cleanup(pop.Close)
 
 	popURL, _ := url.Parse(pop.URL)
@@ -140,7 +140,7 @@ func TestProxy_UnknownUpstreamID_BadGateway(t *testing.T) {
 		{ID: "r1", Enabled: true, Pattern: "ghost.test", Action: rules.ActionProxy, UpstreamID: "does-not-exist"},
 	}, rules.Decision{Action: rules.ActionDirect})
 
-	pop := httptest.NewServer(proxy.NewServerWithDeps(matcher, mgr))
+	pop := httptest.NewServer(proxy.NewServerWithSnapshot(proxy.NewSnapshot(matcher, mgr)))
 	t.Cleanup(pop.Close)
 
 	popURL, _ := url.Parse(pop.URL)
