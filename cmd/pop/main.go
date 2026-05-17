@@ -71,7 +71,7 @@ func main() {
 	handler := proxy.NewServerWithSnapshot(proxy.NewSnapshot(model.BuildMatcher(ruleItems, cfg.DefaultAction), upstreams))
 	handler.SetTelemetry(telStore)
 
-	consoleHandler, err := console.NewServer(cfg, db, handler, telStore, sysStats)
+	consoleHandler, err := console.NewServer(cfg, db, handler, telStore, sysStats, handler.Connections())
 	if err != nil {
 		log.Fatalf("build console server failed: %v", err)
 	}

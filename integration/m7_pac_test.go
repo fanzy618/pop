@@ -39,7 +39,7 @@ func TestPACGeneration(t *testing.T) {
 	cfg := config.Default()
 	cfg.ProxyListen = "0.0.0.0:5128"
 
-	srv, err := console.NewServer(cfg, db, proxySrv, tel, nil)
+	srv, err := console.NewServer(cfg, db, proxySrv, tel, nil, proxySrv.Connections())
 	if err != nil {
 		t.Fatalf("new console server: %v", err)
 	}
@@ -93,7 +93,7 @@ func TestPACOverride(t *testing.T) {
 	cfg := config.Default()
 	cfg.PACProxyAddr = "custom-proxy.internal:8888"
 
-	srv, err := console.NewServer(cfg, db, proxySrv, tel, nil)
+	srv, err := console.NewServer(cfg, db, proxySrv, tel, nil, proxySrv.Connections())
 	if err != nil {
 		t.Fatalf("new console server: %v", err)
 	}

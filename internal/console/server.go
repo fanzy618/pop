@@ -27,10 +27,11 @@ import (
 var staticAssets embed.FS
 
 type Server struct {
-	db        Store
-	proxy     RouteSink
-	telemetry TelemetryFeed
-	sysStats  SysHistoryFeed
+	db          Store
+	proxy       RouteSink
+	telemetry   TelemetryFeed
+	sysStats    SysHistoryFeed
+	connections ConnectionsFeed
 
 	mu  sync.RWMutex
 	cfg *config.Config
@@ -39,8 +40,9 @@ type Server struct {
 }
 
 // NewServer wires the console against the narrow interfaces in deps.go.
-// sysStats may be nil — /api/stats/history then returns an empty list.
-func NewServer(cfg *config.Config, db Store, proxyServer RouteSink, telemetryFeed TelemetryFeed, sysStats SysHistoryFeed) (*Server, error) {
+// sysStats and connections may both be nil — the corresponding endpoints
+// then return an empty list.
+func NewServer(cfg *config.Config, db Store, proxyServer RouteSink, telemetryFeed TelemetryFeed, sysStats SysHistoryFeed, connectionsFeed ConnectionsFeed) (*Server, error) {
 	if cfg == nil {
 		cfg = config.Default()
 	}
@@ -55,11 +57,12 @@ func NewServer(cfg *config.Config, db Store, proxyServer RouteSink, telemetryFee
 	}
 
 	s := &Server{
-		db:        db,
-		proxy:     proxyServer,
-		telemetry: telemetryFeed,
-		sysStats:  sysStats,
-		cfg:       cloneConfig(cfg),
+		db:          db,
+		proxy:       proxyServer,
+		telemetry:   telemetryFeed,
+		sysStats:    sysStats,
+		connections: connectionsFeed,
+		cfg:         cloneConfig(cfg),
 	}
 
 	if err := s.applyBaseConfigLocked(cloneConfig(cfg)); err != nil {
@@ -90,6 +93,7 @@ func NewServer(cfg *config.Config, db Store, proxyServer RouteSink, telemetryFee
 	mux.HandleFunc("/api/stats/history", s.handleStatsHistory)
 	mux.HandleFunc("/api/activities", s.handleActivities)
 	mux.HandleFunc("/api/activities/stream", s.handleActivitiesStream)
+	mux.HandleFunc("/api/connections", s.handleConnections)
 	mux.HandleFunc("/proxy.pac", s.handlePAC)
 
 	s.mux = mux

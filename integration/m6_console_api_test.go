@@ -661,7 +661,7 @@ func setupConsoleAndProxy(t *testing.T) (consoleURL string, proxyURL string, dbP
 	}
 	t.Cleanup(func() { _ = db.Close() })
 
-	consoleServer, err := console.NewServer(cfg, db, proxyServer, telStore, nil)
+	consoleServer, err := console.NewServer(cfg, db, proxyServer, telStore, nil, proxyServer.Connections())
 	if err != nil {
 		t.Fatalf("new console server: %v", err)
 	}

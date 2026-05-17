@@ -7,12 +7,13 @@ import (
 )
 
 var pagePaths = map[string]string{
-	"/":           "assets/index.html",
-	"/stats":      "assets/index.html",
-	"/activities": "assets/activities.html",
-	"/rules":      "assets/rules.html",
-	"/upstreams":  "assets/upstreams.html",
-	"/data":       "assets/data.html",
+	"/":            "assets/index.html",
+	"/stats":       "assets/index.html",
+	"/connections": "assets/connections.html",
+	"/activities":  "assets/activities.html",
+	"/rules":       "assets/rules.html",
+	"/upstreams":   "assets/upstreams.html",
+	"/data":        "assets/data.html",
 }
 
 func (s *Server) handlePage(w http.ResponseWriter, r *http.Request) {

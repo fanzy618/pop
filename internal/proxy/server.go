@@ -59,8 +59,9 @@ type Server struct {
 	dialer          *net.Dialer
 	loopID          string
 
-	snapshot  atomic.Pointer[RouteSnapshot]
-	telemetry atomic.Pointer[telemetry.Store]
+	snapshot    atomic.Pointer[RouteSnapshot]
+	telemetry   atomic.Pointer[telemetry.Store]
+	connections atomic.Pointer[telemetry.Connections]
 }
 
 func generateLoopID() string {
@@ -97,6 +98,7 @@ func NewServer() *Server {
 	}
 	s.snapshot.Store(NewSnapshot(nil, nil))
 	s.telemetry.Store(telemetry.NewStore(10000, 30*time.Minute))
+	s.connections.Store(telemetry.NewConnections(0))
 	return s
 }
 
@@ -124,6 +126,20 @@ func (s *Server) SetTelemetry(store *telemetry.Store) {
 		store = telemetry.NewStore(10000, 30*time.Minute)
 	}
 	s.telemetry.Store(store)
+}
+
+// SetConnections swaps the connection registry. Used by main.go to share
+// the registry with the console handler.
+func (s *Server) SetConnections(c *telemetry.Connections) {
+	if c == nil {
+		c = telemetry.NewConnections(0)
+	}
+	s.connections.Store(c)
+}
+
+// Connections returns the current connection registry. Always non-nil.
+func (s *Server) Connections() *telemetry.Connections {
+	return s.connections.Load()
 }
 
 func (s *Server) decide(host string) rules.Decision {
@@ -165,6 +181,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		RequestBytes: maxInt64(r.ContentLength, 0),
 	}
 
+	// Register an in-flight entry so /api/connections can show it. May be
+	// nil if the registry is at cap or absent; downstream handlers tolerate
+	// nil byte counters.
+	conn := s.openConnection(r, decision)
+	var liveIn, liveOut *atomic.Int64
+	if conn != nil {
+		liveIn = &conn.BytesIn
+		liveOut = &conn.BytesOut
+		defer s.connections.Load().Close(conn.ID)
+	}
+
 	startAt := time.Now()
 	if tel != nil {
 		tel.Start(result.RequestBytes)
@@ -201,33 +228,51 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if r.Method == http.MethodConnect {
-			status, err := s.handleConnectViaUpstream(w, r, target)
+			status, err := s.handleConnectViaUpstream(w, r, target, liveIn, liveOut)
 			result.Status = status
 			result.Err = err
 			return
 		}
 
-		rw := newResponseRecorder(w)
-		s.handleHTTP(rw, r, target.Transport)
+		rw := newResponseRecorderLive(w, liveOut)
+		s.handleHTTP(rw, r, target.Transport, liveIn)
 		result.Status = rw.status
 		result.ResponseBytes = rw.bytes
 		return
 	}
 
 	if r.Method == http.MethodConnect {
-		status, err := s.handleConnect(w, r)
+		status, err := s.handleConnect(w, r, liveIn, liveOut)
 		result.Status = status
 		result.Err = err
 		return
 	}
 
-	rw := newResponseRecorder(w)
-	s.handleHTTP(rw, r, s.directTransport)
+	rw := newResponseRecorderLive(w, liveOut)
+	s.handleHTTP(rw, r, s.directTransport, liveIn)
 	result.Status = rw.status
 	result.ResponseBytes = rw.bytes
 }
 
-func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request, transport *http.Transport) {
+// openConnection inserts an entry into the registry for the in-flight
+// request. Returns nil when the registry is full or absent — callers handle
+// nil byte counters gracefully.
+func (s *Server) openConnection(r *http.Request, decision rules.Decision) *telemetry.ConnState {
+	reg := s.connections.Load()
+	if reg == nil {
+		return nil
+	}
+	return reg.Open(telemetry.ConnState{
+		Client:     r.RemoteAddr,
+		Method:     r.Method,
+		Host:       matchHost(r),
+		Action:     string(decision.Action),
+		RuleID:     decision.RuleID,
+		UpstreamID: decision.UpstreamID,
+	})
+}
+
+func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request, transport *http.Transport, liveIn *atomic.Int64) {
 	if transport == nil {
 		http.Error(w, "transport unavailable", http.StatusBadGateway)
 		return
@@ -245,6 +290,9 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request, transport *h
 	if s.loopID != "" {
 		upReq.Header.Set("X-Pop-Loop-Id", s.loopID)
 	}
+	if liveIn != nil && upReq.Body != nil && upReq.Body != http.NoBody {
+		upReq.Body = newCountedReader(upReq.Body, liveIn)
+	}
 
 	resp, err := transport.RoundTrip(upReq)
 	if err != nil {
@@ -259,7 +307,7 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request, transport *h
 	_, _ = io.Copy(w, resp.Body)
 }
 
-func (s *Server) handleConnectViaUpstream(w http.ResponseWriter, r *http.Request, target *upstream.Target) (int, error) {
+func (s *Server) handleConnectViaUpstream(w http.ResponseWriter, r *http.Request, target *upstream.Target, liveIn, liveOut *atomic.Int64) (int, error) {
 	if target == nil || target.URL == nil {
 		http.Error(w, "upstream proxy is invalid", http.StatusBadGateway)
 		return http.StatusBadGateway, errors.New("upstream proxy is invalid")
@@ -324,7 +372,7 @@ func (s *Server) handleConnectViaUpstream(w http.ResponseWriter, r *http.Request
 		return http.StatusInternalServerError, err
 	}
 
-	tunnel(clientConn, upstreamConn)
+	tunnelWithCounters(clientConn, upstreamConn, liveIn, liveOut)
 	return http.StatusOK, nil
 }
 
@@ -357,7 +405,7 @@ func writeUpstreamConnectRequest(conn net.Conn, target string, upstreamURL *url.
 	return err
 }
 
-func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) (int, error) {
+func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request, liveIn, liveOut *atomic.Int64) (int, error) {
 	target := normalizeHost(r.Host)
 	if target == "" {
 		http.Error(w, "bad connect target", http.StatusBadRequest)
@@ -391,8 +439,17 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) (int, err
 		return http.StatusInternalServerError, err
 	}
 
-	tunnel(clientConn, upConn)
+	tunnelWithCounters(clientConn, upConn, liveIn, liveOut)
 	return http.StatusOK, nil
+}
+
+// tunnelWithCounters is tunnel + per-direction byte accounting via wrapping
+// the client-side conn in countedConn.
+func tunnelWithCounters(client, server net.Conn, liveIn, liveOut *atomic.Int64) {
+	if liveIn != nil || liveOut != nil {
+		client = wrapClientConn(client, liveIn, liveOut)
+	}
+	tunnel(client, server)
 }
 
 func tunnel(a, b net.Conn) {
@@ -540,10 +597,17 @@ type responseRecorder struct {
 	status      int
 	bytes       int64
 	wroteHeader bool
+	live        *atomic.Int64 // optional: mirrors bytes for live "connections" view
 }
 
 func newResponseRecorder(w http.ResponseWriter) *responseRecorder {
 	return &responseRecorder{ResponseWriter: w, status: http.StatusOK}
+}
+
+// newResponseRecorderLive is like newResponseRecorder but also reports each
+// Write into live, so the in-flight connection view sees bytes-out grow.
+func newResponseRecorderLive(w http.ResponseWriter, live *atomic.Int64) *responseRecorder {
+	return &responseRecorder{ResponseWriter: w, status: http.StatusOK, live: live}
 }
 
 func (r *responseRecorder) WriteHeader(statusCode int) {
@@ -560,6 +624,9 @@ func (r *responseRecorder) Write(p []byte) (int, error) {
 	}
 	n, err := r.ResponseWriter.Write(p)
 	r.bytes += int64(n)
+	if n > 0 && r.live != nil {
+		r.live.Add(int64(n))
+	}
 	return n, err
 }
 

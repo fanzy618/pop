@@ -600,6 +600,87 @@ async function loadActivities() {
   events.reverse().forEach(appendActivity);
 }
 
+// ─── Current connections ───────────────────────────────────────────────────
+const connectionsBody = document.getElementById("connections-body");
+const connectionsCountEl = document.getElementById("connections-count");
+// previous snapshot keyed by connection id, used to derive Δbytes / Δt
+let lastConnSnapshot = { ts: 0, byId: new Map() };
+
+function fmtDuration(ms) {
+  const n = Number(ms || 0);
+  if (n < 1000) return `${n}ms`;
+  const s = Math.floor(n / 1000);
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  if (m < 60) return `${m}m${rem.toString().padStart(2, "0")}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h${(m % 60).toString().padStart(2, "0")}m`;
+}
+
+function fmtRate(bytesPerSec) {
+  if (!Number.isFinite(bytesPerSec) || bytesPerSec <= 0) return "—";
+  return `${fmtBytes(bytesPerSec)}/s`;
+}
+
+function escapeText(v) {
+  return String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+function ruleOrUpstreamLabel(conn) {
+  if (conn.action === "PROXY" && conn.upstream_id) return `上游 #${conn.upstream_id}`;
+  if (conn.rule_id) return `规则 #${conn.rule_id}`;
+  return "—";
+}
+
+async function loadConnections() {
+  if (!connectionsBody) return;
+  const items = await api("/api/connections");
+  const list = Array.isArray(items) ? items : [];
+  const now = Date.now();
+  const prev = lastConnSnapshot;
+  const dt = prev.ts > 0 ? (now - prev.ts) / 1000 : 0;
+
+  if (connectionsCountEl) {
+    connectionsCountEl.textContent = list.length ? `${list.length}` : "";
+  }
+
+  if (list.length === 0) {
+    connectionsBody.innerHTML = '<tr><td colspan="11" class="hint">尚无在途连接</td></tr>';
+    lastConnSnapshot = { ts: now, byId: new Map() };
+    return;
+  }
+
+  const nextById = new Map();
+  const rows = list.map((c) => {
+    const before = prev.byId.get(c.id);
+    let dnRate = 0;
+    let upRate = 0;
+    if (before && dt > 0) {
+      dnRate = Math.max(0, (c.bytes_out - before.bytes_out) / dt);
+      upRate = Math.max(0, (c.bytes_in - before.bytes_in) / dt);
+    }
+    nextById.set(c.id, { bytes_in: c.bytes_in, bytes_out: c.bytes_out });
+    return `<tr>
+      <td>${c.id}</td>
+      <td>${escapeText(c.client)}</td>
+      <td>${escapeText(c.method)}</td>
+      <td title="${escapeText(c.host)}">${escapeText(c.host)}</td>
+      <td>${escapeText(c.action)}</td>
+      <td>${escapeText(ruleOrUpstreamLabel(c))}</td>
+      <td>${fmtDuration(c.duration_ms)}</td>
+      <td>${fmtBytes(c.bytes_out)}</td>
+      <td>${fmtBytes(c.bytes_in)}</td>
+      <td>${fmtRate(dnRate)}</td>
+      <td>${fmtRate(upRate)}</td>
+    </tr>`;
+  });
+  connectionsBody.innerHTML = rows.join("");
+  lastConnSnapshot = { ts: now, byId: nextById };
+}
+
 async function loadRules() {
   clampRulesPage();
   const params = new URLSearchParams();
@@ -875,6 +956,15 @@ async function init() {
       await loadActivities();
       startSSE();
       showMsg("访问记录页已就绪");
+      return;
+    }
+
+    if (page === "connections") {
+      await loadConnections();
+      setInterval(() => {
+        loadConnections().catch((err) => showMsg(`连接刷新失败: ${err.message}`, true));
+      }, 1000);
+      showMsg("当前连接页已就绪");
       return;
     }
 

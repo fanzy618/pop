@@ -51,11 +51,19 @@ type SysHistoryFeed interface {
 	History(time.Duration) []telemetry.Sample
 }
 
+// ConnectionsFeed exposes the in-flight connection registry used by
+// /api/connections. Optional — when nil, the endpoint returns an empty
+// array.
+type ConnectionsFeed interface {
+	Snapshot() []telemetry.ConnSnapshot
+}
+
 // Compile-time checks that the production types satisfy the interfaces.
 // Update these if the interfaces grow.
 var (
-	_ Store          = (*store.SQLite)(nil)
-	_ RouteSink      = (*proxy.Server)(nil)
-	_ TelemetryFeed  = (*telemetry.Store)(nil)
-	_ SysHistoryFeed = (*telemetry.SysStatsCollector)(nil)
+	_ Store           = (*store.SQLite)(nil)
+	_ RouteSink       = (*proxy.Server)(nil)
+	_ TelemetryFeed   = (*telemetry.Store)(nil)
+	_ SysHistoryFeed  = (*telemetry.SysStatsCollector)(nil)
+	_ ConnectionsFeed = (*telemetry.Connections)(nil)
 )

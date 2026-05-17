@@ -3,45 +3,47 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>POP 控制台 - 上游管理</title>
+  <title>POP 控制台 - 当前连接</title>
   <link rel="stylesheet" href="/assets/style.css">
 </head>
-<body data-page="upstreams">
+<body data-page="connections">
   <header class="topbar">
     <h1>POP 控制台 <span id="app-version" class="version-badge"></span></h1>
     <p>Proxy of Proxy 运行面板</p>
     <nav class="tabs" aria-label="控制台导航">
       <a class="tab" href="/stats">实时统计</a>
-      <a class="tab" href="/connections">当前连接</a>
+      <a class="tab active" href="/connections">当前连接</a>
       <a class="tab" href="/activities">访问记录</a>
       <a class="tab" href="/rules">规则管理</a>
-      <a class="tab active" href="/upstreams">上游管理</a>
+      <a class="tab" href="/upstreams">上游管理</a>
       <a class="tab" href="/data">数据管理</a>
     </nav>
   </header>
 
   <main class="layout">
     <section class="card">
-      <h2>上游管理</h2>
-      <form id="upstream-form" class="form-inline">
-        <input name="name" placeholder="上游名称(可选)">
-        <input name="url" placeholder="http://host:port" required>
-        <label><input name="enabled" type="checkbox" checked>启用</label>
-        <button type="submit">新增上游</button>
-        <button id="upstream-cancel" type="button" class="secondary hidden">取消编辑</button>
-      </form>
+      <h2>当前连接 <span id="connections-count" class="version-badge"></span></h2>
+      <p class="hint">每秒轮询 <code>/api/connections</code>，瞬时速率由两次快照差分得出。空闲时表格为空。</p>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>ID</th>
-              <th>名称</th>
-              <th>URL</th>
-              <th>启用</th>
-              <th>操作</th>
+              <th>#</th>
+              <th>客户端</th>
+              <th>方法</th>
+              <th>目标</th>
+              <th>动作</th>
+              <th>规则/上游</th>
+              <th>持续</th>
+              <th>↓ 总量</th>
+              <th>↑ 总量</th>
+              <th>↓ 速率</th>
+              <th>↑ 速率</th>
             </tr>
           </thead>
-          <tbody id="upstreams-body"></tbody>
+          <tbody id="connections-body">
+            <tr><td colspan="11" class="hint">尚无在途连接</td></tr>
+          </tbody>
         </table>
       </div>
     </section>

@@ -14,6 +14,7 @@ POP is a local HTTP proxy with a web console for domain-based routing.
 - Live telemetry: in-flight, totals, bandwidth, activities, SSE stream
 - Web console pages:
   - Stats
+  - Current connections (live, per-flow bytes & rates incl. HTTPS tunnels)
   - Activities (supports quick "add rule" from an activity row)
   - Rules
   - Upstreams
@@ -90,6 +91,7 @@ POP_PROXY_LISTEN=127.0.0.1:18080 make run ARGS="--console-listen 127.0.0.1:19090
 - `GET /api/stats`
 - `GET /api/activities?limit=100`
 - `GET /api/activities/stream`
+- `GET /api/connections`
 
 Notes:
 

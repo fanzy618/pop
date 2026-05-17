@@ -40,7 +40,7 @@ func TestStatsHistory_ReturnsSamplesAndShape(t *testing.T) {
 	t.Cleanup(cancel)
 	sysStats.Start(ctx)
 
-	consoleServer, err := console.NewServer(cfg, db, proxyServer, telStore, sysStats)
+	consoleServer, err := console.NewServer(cfg, db, proxyServer, telStore, sysStats, proxyServer.Connections())
 	if err != nil {
 		t.Fatalf("new console server: %v", err)
 	}
