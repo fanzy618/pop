@@ -21,19 +21,16 @@ import (
 	"sync"
 
 	"github.com/fanzy618/pop/internal/config"
-	"github.com/fanzy618/pop/internal/proxy"
-	"github.com/fanzy618/pop/internal/store"
-	"github.com/fanzy618/pop/internal/telemetry"
 )
 
 //go:embed assets/*
 var staticAssets embed.FS
 
 type Server struct {
-	db        *store.SQLite
-	proxy     *proxy.Server
-	telemetry *telemetry.Store
-	sysStats  *telemetry.SysStatsCollector
+	db        Store
+	proxy     RouteSink
+	telemetry TelemetryFeed
+	sysStats  SysHistoryFeed
 
 	mu  sync.RWMutex
 	cfg *config.Config
@@ -41,7 +38,9 @@ type Server struct {
 	mux http.Handler
 }
 
-func NewServer(cfg *config.Config, db *store.SQLite, proxyServer *proxy.Server, telemetryStore *telemetry.Store, sysStats *telemetry.SysStatsCollector) (*Server, error) {
+// NewServer wires the console against the narrow interfaces in deps.go.
+// sysStats may be nil — /api/stats/history then returns an empty list.
+func NewServer(cfg *config.Config, db Store, proxyServer RouteSink, telemetryFeed TelemetryFeed, sysStats SysHistoryFeed) (*Server, error) {
 	if cfg == nil {
 		cfg = config.Default()
 	}
@@ -51,14 +50,14 @@ func NewServer(cfg *config.Config, db *store.SQLite, proxyServer *proxy.Server, 
 	if proxyServer == nil {
 		return nil, errors.New("proxy server is required")
 	}
-	if telemetryStore == nil {
-		return nil, errors.New("telemetry store is required")
+	if telemetryFeed == nil {
+		return nil, errors.New("telemetry feed is required")
 	}
 
 	s := &Server{
 		db:        db,
 		proxy:     proxyServer,
-		telemetry: telemetryStore,
+		telemetry: telemetryFeed,
 		sysStats:  sysStats,
 		cfg:       cloneConfig(cfg),
 	}

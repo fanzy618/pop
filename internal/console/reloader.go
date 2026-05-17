@@ -34,6 +34,5 @@ func (s *Server) rebuildRuntimeLocked() error {
 	}
 
 	s.proxy.Publish(proxy.NewSnapshot(model.BuildMatcher(ruleItems, s.cfg.DefaultAction), mgr))
-	s.proxy.SetTelemetry(s.telemetry)
 	return nil
 }
