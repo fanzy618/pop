@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/fanzy618/pop/internal/config"
@@ -19,6 +23,8 @@ import (
 	"github.com/fanzy618/pop/internal/telemetry"
 	"github.com/fanzy618/pop/internal/upstream"
 )
+
+const shutdownTimeout = 30 * time.Second
 
 const (
 	envProxyListen   = "POP_PROXY_LISTEN"
@@ -55,9 +61,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("build upstreams failed: %v", err)
 	}
+	rootCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	telStore := telemetry.NewStore(10000, 30*time.Minute)
 	sysStats := telemetry.NewSysStatsCollector(telStore.Snapshot, 360, 10*time.Second, time.Hour)
-	sysStats.Start(context.Background())
+	sysStats.Start(rootCtx)
 
 	handler := proxy.NewServerWithSnapshot(proxy.NewSnapshot(model.BuildMatcher(ruleItems, cfg.DefaultAction), upstreams))
 	handler.SetTelemetry(telStore)
@@ -67,18 +76,48 @@ func main() {
 		log.Fatalf("build console server failed: %v", err)
 	}
 	consoleSrv := &http.Server{Addr: cfg.ConsoleListen, Handler: consoleHandler}
+	proxySrv := &http.Server{Addr: cfg.ProxyListen, Handler: handler}
+
+	serveErrs := make(chan error, 2)
 	go func() {
 		log.Printf("pop console listening on %s", cfg.ConsoleListen)
-		if err := consoleSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			log.Fatalf("console server stopped: %v", err)
+		if err := consoleSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErrs <- fmt.Errorf("console: %w", err)
+		}
+	}()
+	go func() {
+		log.Printf("pop proxy listening on %s", cfg.ProxyListen)
+		if err := proxySrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErrs <- fmt.Errorf("proxy: %w", err)
 		}
 	}()
 
-	srv := &http.Server{Addr: cfg.ProxyListen, Handler: handler}
-	log.Printf("pop proxy listening on %s", cfg.ProxyListen)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("proxy server stopped: %v", err)
+	select {
+	case <-rootCtx.Done():
+		log.Print("shutdown signal received")
+	case err := <-serveErrs:
+		log.Printf("listener failed: %v — initiating shutdown", err)
+		stop()
 	}
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		if err := consoleSrv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("console shutdown: %v", err)
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if err := proxySrv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("proxy shutdown: %v", err)
+		}
+	}()
+	wg.Wait()
 }
 
 func resolveRuntimeConfig(args []string, getenv func(string) string) (*config.Config, error) {
