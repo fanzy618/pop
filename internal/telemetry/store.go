@@ -1,9 +1,11 @@
+// Package telemetry collects per-request observability data. Store is the
+// composition root that ties together three single-purpose pieces — atomic
+// counters, a bounded TTL event ring buffer, and a fan-out event bus —
+// behind one public type with stable method signatures.
 package telemetry
 
 import (
 	"context"
-	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -42,19 +44,13 @@ type Stats struct {
 	BytesOut      int64 `json:"bytes_out"`
 }
 
+// Store composes counters + eventBuffer + eventBus. Public API and JSON
+// wire format are unchanged from the prior monolithic implementation —
+// only internal cohesion has improved.
 type Store struct {
-	capacity int
-	ttl      time.Duration
-
-	mu     sync.RWMutex
-	events []Event
-	subs   map[chan Event]struct{}
-
-	inFlight      atomic.Int64
-	totalRequests atomic.Int64
-	totalErrors   atomic.Int64
-	bytesIn       atomic.Int64
-	bytesOut      atomic.Int64
+	counters counters
+	buffer   *eventBuffer
+	bus      *eventBus
 }
 
 func NewStore(capacity int, ttl time.Duration) *Store {
@@ -64,26 +60,18 @@ func NewStore(capacity int, ttl time.Duration) *Store {
 	if ttl <= 0 {
 		ttl = 30 * time.Minute
 	}
-
-	return &Store{capacity: capacity, ttl: ttl, events: make([]Event, 0, min(capacity, 128)), subs: make(map[chan Event]struct{})}
+	return &Store{
+		buffer: newEventBuffer(capacity, ttl),
+		bus:    newEventBus(),
+	}
 }
 
 func (s *Store) Start(requestBytes int64) {
-	s.inFlight.Add(1)
-	s.totalRequests.Add(1)
-	if requestBytes > 0 {
-		s.bytesIn.Add(requestBytes)
-	}
+	s.counters.start(requestBytes)
 }
 
 func (s *Store) Finish(result Result) {
-	s.inFlight.Add(-1)
-	if result.ResponseBytes > 0 {
-		s.bytesOut.Add(result.ResponseBytes)
-	}
-	if result.Err != nil || result.Status >= 500 {
-		s.totalErrors.Add(1)
-	}
+	s.counters.finish(result.ResponseBytes, result.Err != nil || result.Status >= 500)
 
 	event := Event{
 		Time:          time.Now(),
@@ -101,50 +89,19 @@ func (s *Store) Finish(result Result) {
 		event.Error = result.Err.Error()
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.cleanupExpiredLocked(time.Now())
-	s.events = append(s.events, event)
-	for ch := range s.subs {
-		select {
-		case ch <- event:
-		default:
-		}
-	}
-	if over := len(s.events) - s.capacity; over > 0 {
-		s.events = append([]Event(nil), s.events[over:]...)
-	}
+	s.buffer.append(event)
+	s.bus.publish(event)
 }
 
-func (s *Store) Snapshot() Stats {
-	return Stats{
-		InFlight:      s.inFlight.Load(),
-		TotalRequests: s.totalRequests.Load(),
-		TotalErrors:   s.totalErrors.Load(),
-		BytesIn:       s.bytesIn.Load(),
-		BytesOut:      s.bytesOut.Load(),
-	}
+func (s *Store) Snapshot() Stats               { return s.counters.snapshot() }
+func (s *Store) Recent(limit int) []Event      { return s.buffer.recent(limit) }
+func (s *Store) CleanupExpired(now time.Time)  { s.buffer.cleanupExpired(now) }
+func (s *Store) Subscribe(buffer int) (<-chan Event, func()) {
+	return s.bus.subscribe(buffer)
 }
 
-func (s *Store) Recent(limit int) []Event {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if limit <= 0 || limit > len(s.events) {
-		limit = len(s.events)
-	}
-	start := len(s.events) - limit
-	out := make([]Event, limit)
-	copy(out, s.events[start:])
-	return out
-}
-
-func (s *Store) CleanupExpired(now time.Time) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.cleanupExpiredLocked(now)
-}
-
+// StartJanitor periodically evicts events older than the TTL. The goroutine
+// exits when ctx is cancelled.
 func (s *Store) StartJanitor(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		interval = time.Minute
@@ -161,42 +118,6 @@ func (s *Store) StartJanitor(ctx context.Context, interval time.Duration) {
 			}
 		}
 	}()
-}
-
-func (s *Store) Subscribe(buffer int) (<-chan Event, func()) {
-	if buffer <= 0 {
-		buffer = 32
-	}
-	ch := make(chan Event, buffer)
-
-	s.mu.Lock()
-	s.subs[ch] = struct{}{}
-	s.mu.Unlock()
-
-	unsubscribe := func() {
-		s.mu.Lock()
-		if _, ok := s.subs[ch]; ok {
-			delete(s.subs, ch)
-			close(ch)
-		}
-		s.mu.Unlock()
-	}
-
-	return ch, unsubscribe
-}
-
-func (s *Store) cleanupExpiredLocked(now time.Time) {
-	if len(s.events) == 0 {
-		return
-	}
-	cutoff := now.Add(-s.ttl)
-	idx := 0
-	for idx < len(s.events) && s.events[idx].Time.Before(cutoff) {
-		idx++
-	}
-	if idx > 0 {
-		s.events = append([]Event(nil), s.events[idx:]...)
-	}
 }
 
 func min(a, b int) int {
